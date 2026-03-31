@@ -39,7 +39,7 @@ This repository now contains a minimal Go MVP scaffold:
 
 Current limitations:
 
-- control tunnel bootstrap is still explicit; `bob open` does not create the first SSH session
+- `bob open` still does not create the first SSH session from the remote side
 - duplicate suppression is not implemented yet
 - default policy is localhost-only
 
@@ -79,10 +79,20 @@ bobd init
 
 ```bash
 export BOBD_TOKEN=...
-bobd serve
+bobd serve --tunnel-name devbox --ssh user@remote-host
 ```
 
-3. Create a port forward so the remote machine can reach local `bobd`
+3. On the remote machine:
+
+```bash
+export BOB_ENDPOINT=http://127.0.0.1:17331
+export BOB_TOKEN=...
+export BOB_SESSION=devbox
+bob doctor
+bob open http://127.0.0.1:5173
+```
+
+If you prefer to keep the SSH session separate, you can still create the port forward explicitly.
 
 Manual SSH example:
 
@@ -94,16 +104,6 @@ Or via `bob tunnel` on the local machine:
 
 ```bash
 bob tunnel up devbox --ssh user@remote-host
-```
-
-4. On the remote machine:
-
-```bash
-export BOB_ENDPOINT=http://127.0.0.1:17331
-export BOB_TOKEN=...
-export BOB_SESSION=devbox
-bob doctor
-bob open http://127.0.0.1:5173
 ```
 
 Important:
@@ -128,6 +128,13 @@ If automatic opening fails, `bob open` prints the URL so the user can open it ma
 - `BOBD_BIND` default: `127.0.0.1:7331`
 - `BOBD_TOKEN` required
 - `BOBD_LOCALHOST_ONLY` default: `true`
+
+`bobd serve` flags:
+
+- `--tunnel-name` tunnel session name to create on startup
+- `--ssh` SSH target for that session
+- `--remote-bob-port` remote loopback port for `BOB_ENDPOINT` (default: `17331`)
+- `--local-bobd` local bobd address forwarded over SSH (default: `BOBD_BIND`)
 
 ## Docs
 

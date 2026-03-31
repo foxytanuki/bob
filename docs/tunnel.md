@@ -12,7 +12,7 @@ bob tunnel down <name>
 
 `--mirror` is now optional. The recommended path is:
 
-1. create the control tunnel explicitly with `bob tunnel up`
+1. start the control tunnel either with `bobd serve --tunnel-name ... --ssh ...` or explicitly with `bob tunnel up`
 2. let `bobd` auto-create loopback app mirrors on demand when `bob open` runs
 
 ## Example
@@ -21,8 +21,7 @@ Local machine:
 
 ```bash
 export BOBD_TOKEN=...
-bobd serve
-bob tunnel up devbox --ssh user@remote-host
+bobd serve --tunnel-name devbox --ssh user@remote-host
 ```
 
 Remote machine:
@@ -48,7 +47,7 @@ That matters when you want to pin a mirror up front instead of letting `bobd` al
 ## Notes
 
 - `bob tunnel` uses the system `ssh` command.
+- `bobd serve --tunnel-name ... --ssh ...` can bootstrap the initial control tunnel and shuts it down when `bobd` exits.
 - tunnel state is stored under XDG state dir, e.g. `~/.local/state/bob/`.
 - tokens are **not** stored in tunnel state.
 - `bob open` auto-mirror requires `BOB_SESSION`.
-- future direction: `bobd` could own the initial `tunnel up` flow too, but that is not implemented yet.
