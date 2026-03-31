@@ -53,7 +53,7 @@ On the local machine:
 ```bash
 export BOBD_TOKEN=...
 bobd serve
-bob tunnel up devbox --ssh user@remote-host --mirror 5173
+bob tunnel up devbox --ssh user@remote-host
 ```
 
 This creates:
@@ -66,9 +66,12 @@ Then on the remote machine:
 ```bash
 export BOB_ENDPOINT=http://127.0.0.1:17331
 export BOB_TOKEN=...
+export BOB_SESSION=devbox
 bob doctor
 bob open http://127.0.0.1:5173
 ```
+
+`bobd` will ensure a local mirror for loopback app URLs on demand. If local port `5173` is busy, it may choose another local port and open that rewritten URL.
 
 To inspect or stop the tunnel later:
 

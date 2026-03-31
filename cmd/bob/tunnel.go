@@ -100,6 +100,7 @@ func runTunnelUp(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout, "On the remote machine:")
 	fmt.Fprintf(stdout, "  export BOB_ENDPOINT=%s\n", state.Endpoint())
 	fmt.Fprintln(stdout, "  export BOB_TOKEN=...")
+	fmt.Fprintf(stdout, "  export BOB_SESSION=%s\n", state.Name)
 	fmt.Fprintln(stdout, "  bob doctor")
 	return 0
 }
@@ -242,14 +243,14 @@ func printTunnelDetails(w io.Writer, status tunnel.StatusInfo) {
 	}
 
 	mirrors := "none"
-	if len(state.MirrorPorts) > 0 {
-		mirrors = formatPorts(state.MirrorPorts)
+	if len(state.Mappings) > 0 {
+		mirrors = formatMappings(state.Mappings)
 	}
 
 	fmt.Fprintf(w, "Tunnel: %s\n", state.Name)
 	fmt.Fprintf(w, "SSH target: %s\n", state.SSHTarget)
 	fmt.Fprintf(w, "Control endpoint for remote bob: %s\n", state.Endpoint())
-	fmt.Fprintf(w, "Mirrored app ports: %s\n", mirrors)
+	fmt.Fprintf(w, "Mirrors: %s\n", mirrors)
 	fmt.Fprintf(w, "Started: %s\n", state.CreatedAt.Format(time.RFC3339))
 	fmt.Fprintf(w, "Status: %s\n", stateText)
 	if status.CheckError != "" {
@@ -261,6 +262,14 @@ func formatPorts(ports []int) string {
 	parts := make([]string, 0, len(ports))
 	for _, port := range ports {
 		parts = append(parts, fmt.Sprintf("%d", port))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func formatMappings(mappings []tunnel.Mapping) string {
+	parts := make([]string, 0, len(mappings))
+	for _, mapping := range mappings {
+		parts = append(parts, fmt.Sprintf("%d->%d", mapping.RemotePort, mapping.LocalPort))
 	}
 	return strings.Join(parts, ", ")
 }

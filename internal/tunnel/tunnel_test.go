@@ -13,10 +13,16 @@ import (
 )
 
 type fakeRunner struct {
-	upErr    error
-	downErr  error
-	upSpec   sshwrap.UpSpec
-	downSpec sshwrap.ControlSpec
+	upErr       error
+	downErr     error
+	checkErr    error
+	forwardErrs []error
+	cancelErr   error
+	upSpec      sshwrap.UpSpec
+	downSpec    sshwrap.ControlSpec
+	checkSpec   sshwrap.ControlSpec
+	forwardSpec sshwrap.ForwardSpec
+	cancelSpec  sshwrap.ForwardSpec
 }
 
 func (f *fakeRunner) Up(ctx context.Context, spec sshwrap.UpSpec) error {
@@ -24,11 +30,29 @@ func (f *fakeRunner) Up(ctx context.Context, spec sshwrap.UpSpec) error {
 	return f.upErr
 }
 
-func (f *fakeRunner) Check(ctx context.Context, spec sshwrap.ControlSpec) error { return nil }
+func (f *fakeRunner) Check(ctx context.Context, spec sshwrap.ControlSpec) error {
+	f.checkSpec = spec
+	return f.checkErr
+}
 
 func (f *fakeRunner) Down(ctx context.Context, spec sshwrap.ControlSpec) error {
 	f.downSpec = spec
 	return f.downErr
+}
+
+func (f *fakeRunner) ForwardLocal(ctx context.Context, spec sshwrap.ForwardSpec) error {
+	f.forwardSpec = spec
+	if len(f.forwardErrs) == 0 {
+		return nil
+	}
+	err := f.forwardErrs[0]
+	f.forwardErrs = f.forwardErrs[1:]
+	return err
+}
+
+func (f *fakeRunner) CancelLocal(ctx context.Context, spec sshwrap.ForwardSpec) error {
+	f.cancelSpec = spec
+	return f.cancelErr
 }
 
 func testManager(t *testing.T, root string, runner sshwrap.Runner) *Manager {
@@ -180,5 +204,62 @@ func TestManagerDownCleansUpWhenControlSocketMissing(t *testing.T) {
 	}
 	if _, statErr := os.Stat(m.statePath("demo")); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("state file still exists after stale cleanup: %v", statErr)
+	}
+}
+
+func TestManagerEnsureMirrorReusesExistingMapping(t *testing.T) {
+	root := t.TempDir()
+	runner := &fakeRunner{}
+	m := testManager(t, root, runner)
+	state := State{Name: "demo", SSHTarget: "bob@host", ControlSocket: filepath.Join(root, "sock"), CreatedAt: time.Unix(1, 0).UTC(), Mappings: []Mapping{{RemoteHostClass: HostClassLoopback, RemotePort: 8080, LocalPort: 8080, CreatedAt: time.Unix(2, 0).UTC(), LastUsedAt: time.Unix(2, 0).UTC()}}}
+	if err := os.MkdirAll(filepath.Dir(m.statePath("demo")), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeState(m.statePath("demo"), state); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(state.ControlSocket, []byte("socket"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	mapping, reused, err := m.EnsureMirror(context.Background(), "demo", 8080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reused || mapping.LocalPort != 8080 {
+		t.Fatalf("EnsureMirror() = %#v, %v", mapping, reused)
+	}
+	if runner.forwardSpec.LocalPort != 0 {
+		t.Fatalf("ForwardLocal called unexpectedly: %#v", runner.forwardSpec)
+	}
+}
+
+func TestManagerEnsureMirrorFallsBackAfterConflict(t *testing.T) {
+	root := t.TempDir()
+	runner := &fakeRunner{forwardErrs: []error{errors.New("cannot listen to port"), nil}}
+	m := testManager(t, root, runner)
+	state := State{Name: "demo", SSHTarget: "bob@host", ControlSocket: filepath.Join(root, "sock"), CreatedAt: time.Unix(1, 0).UTC()}
+	if err := os.MkdirAll(filepath.Dir(m.statePath("demo")), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeState(m.statePath("demo"), state); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(state.ControlSocket, []byte("socket"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	mapping, reused, err := m.EnsureMirror(context.Background(), "demo", 8080)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reused {
+		t.Fatal("EnsureMirror() reused = true, want false")
+	}
+	if mapping.LocalPort != FallbackPortStart {
+		t.Fatalf("local port = %d, want %d", mapping.LocalPort, FallbackPortStart)
+	}
+	if runner.forwardSpec.LocalPort != FallbackPortStart {
+		t.Fatalf("ForwardLocal local port = %d", runner.forwardSpec.LocalPort)
 	}
 }

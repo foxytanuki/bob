@@ -10,6 +10,11 @@ bob tunnel status [<name>|--all]
 bob tunnel down <name>
 ```
 
+`--mirror` is now optional. The recommended path is:
+
+1. create the control tunnel explicitly with `bob tunnel up`
+2. let `bobd` auto-create loopback app mirrors on demand when `bob open` runs
+
 ## Example
 
 Local machine:
@@ -17,7 +22,7 @@ Local machine:
 ```bash
 export BOBD_TOKEN=...
 bobd serve
-bob tunnel up devbox --ssh user@remote-host --mirror 8787
+bob tunnel up devbox --ssh user@remote-host
 ```
 
 Remote machine:
@@ -25,21 +30,25 @@ Remote machine:
 ```bash
 export BOB_ENDPOINT=http://127.0.0.1:17331
 export BOB_TOKEN=...
+export BOB_SESSION=devbox
 bob doctor
 bob open http://127.0.0.1:8787
 ```
 
-## What `--mirror` does
+If local `127.0.0.1:8787` is free, `bobd` can mirror that same port. If it is busy, `bobd` may allocate a different local port and open that rewritten URL instead.
+
+## What `--mirror` still does
 
 `--mirror 8787` means:
 
 - local `127.0.0.1:8787` forwards to remote `127.0.0.1:8787`
 
-That matters because `bob open` sends the raw URL to local `bobd`, and local browser then tries to open the same URL.
+That matters when you want to pin a mirror up front instead of letting `bobd` allocate one on demand.
 
 ## Notes
 
 - `bob tunnel` uses the system `ssh` command.
 - tunnel state is stored under XDG state dir, e.g. `~/.local/state/bob/`.
 - tokens are **not** stored in tunnel state.
-- MVP supports same-port mirroring only; URL rewrite is not implemented.
+- `bob open` auto-mirror requires `BOB_SESSION`.
+- future direction: `bobd` could own the initial `tunnel up` flow too, but that is not implemented yet.

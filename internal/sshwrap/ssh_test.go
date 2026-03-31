@@ -52,3 +52,14 @@ func TestBuildUpArgsRejectsInvalidInput(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildForwardLocalArgs(t *testing.T) {
+	args, err := BuildForwardLocalArgs(ForwardSpec{Target: "bob@host", ControlSocket: "/tmp/bob.sock", LocalPort: 8080, RemotePort: 8081})
+	if err != nil {
+		t.Fatalf("BuildForwardLocalArgs() error = %v", err)
+	}
+	want := []string{"-S", "/tmp/bob.sock", "-O", "forward", "-L", "127.0.0.1:8080:127.0.0.1:8081", "bob@host"}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("BuildForwardLocalArgs() = %#v, want %#v", args, want)
+	}
+}

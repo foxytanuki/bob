@@ -33,7 +33,7 @@ func New(endpoint, token string, timeout time.Duration) *Client {
 	}
 }
 
-func (c *Client) Open(ctx context.Context, rawURL string) (*protocol.OpenResponse, error) {
+func (c *Client) Open(ctx context.Context, rawURL, session string) (*protocol.OpenResponse, error) {
 	host, _ := os.Hostname()
 	cwd, _ := os.Getwd()
 	nonce, err := randomNonce()
@@ -41,9 +41,10 @@ func (c *Client) Open(ctx context.Context, rawURL string) (*protocol.OpenRespons
 		return nil, err
 	}
 
-	reqBody := protocol.OpenRequest{
-		Version: protocol.CurrentVersion,
+	reqBody := protocol.OpenRequestV2{
+		Version: protocol.OpenVersionV2,
 		Action:  protocol.ActionOpenURL,
+		Session: session,
 		URL:     rawURL,
 		Source: protocol.Source{
 			App:  filepath.Base(os.Args[0]),
@@ -54,7 +55,7 @@ func (c *Client) Open(ctx context.Context, rawURL string) (*protocol.OpenRespons
 		Nonce:     nonce,
 	}
 
-	requestURL, err := joinEndpoint(c.endpoint, "/open")
+	requestURL, err := joinEndpoint(c.endpoint, "/v2/open")
 	if err != nil {
 		return nil, err
 	}

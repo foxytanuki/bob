@@ -38,7 +38,7 @@ This repository now contains a minimal Go MVP scaffold:
 
 Current limitations:
 
-- `bob tunnel` supports same-port SSH forwarding, but auto-tunnel from `bob open` is not implemented yet
+- control tunnel bootstrap is still explicit; `bob open` does not create the first SSH session
 - duplicate suppression is not implemented yet
 - default policy is localhost-only
 
@@ -80,7 +80,7 @@ ssh -R 17331:127.0.0.1:7331 user@remote-host
 Or via `bob tunnel` on the local machine:
 
 ```bash
-bob tunnel up devbox --ssh user@remote-host --mirror 5173
+bob tunnel up devbox --ssh user@remote-host
 ```
 
 4. On the remote machine:
@@ -88,6 +88,7 @@ bob tunnel up devbox --ssh user@remote-host --mirror 5173
 ```bash
 export BOB_ENDPOINT=http://127.0.0.1:17331
 export BOB_TOKEN=...
+export BOB_SESSION=devbox
 bob doctor
 bob open http://127.0.0.1:5173
 ```
@@ -95,9 +96,8 @@ bob open http://127.0.0.1:5173
 Important:
 
 - `BOB_ENDPOINT` only points to `bobd`.
-- The target app URL itself must already be reachable from the local machine.
-- If your app is running remotely on `127.0.0.1:5173`, you usually need a **separate app forward** too.
-- `bob tunnel up ... --mirror 5173` creates that same-port app mirror automatically.
+- loopback app URLs can now be mirrored automatically after the control tunnel exists.
+- if the same local port is busy, `bobd` may allocate another local port and rewrite the opened URL.
 
 If automatic opening fails, `bob open` prints the URL so the user can open it manually.
 
@@ -107,6 +107,7 @@ If automatic opening fails, `bob open` prints the URL so the user can open it ma
 
 - `BOB_ENDPOINT` default: `http://127.0.0.1:17331`
 - `BOB_TOKEN`
+- `BOB_SESSION` required for auto-mirror, set to the tunnel name
 - `BOB_TIMEOUT` default: `5s`
 
 ### Local daemon

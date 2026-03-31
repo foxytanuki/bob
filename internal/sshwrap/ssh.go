@@ -25,10 +25,19 @@ type ControlSpec struct {
 	ControlSocket string
 }
 
+type ForwardSpec struct {
+	Target        string
+	ControlSocket string
+	LocalPort     int
+	RemotePort    int
+}
+
 type Runner interface {
 	Up(ctx context.Context, spec UpSpec) error
 	Check(ctx context.Context, spec ControlSpec) error
 	Down(ctx context.Context, spec ControlSpec) error
+	ForwardLocal(ctx context.Context, spec ForwardSpec) error
+	CancelLocal(ctx context.Context, spec ForwardSpec) error
 }
 
 type OpenSSH struct {
@@ -61,6 +70,22 @@ func (o *OpenSSH) Check(ctx context.Context, spec ControlSpec) error {
 
 func (o *OpenSSH) Down(ctx context.Context, spec ControlSpec) error {
 	args, err := BuildDownArgs(spec)
+	if err != nil {
+		return err
+	}
+	return o.run(ctx, args)
+}
+
+func (o *OpenSSH) ForwardLocal(ctx context.Context, spec ForwardSpec) error {
+	args, err := BuildForwardLocalArgs(spec)
+	if err != nil {
+		return err
+	}
+	return o.run(ctx, args)
+}
+
+func (o *OpenSSH) CancelLocal(ctx context.Context, spec ForwardSpec) error {
+	args, err := BuildCancelLocalArgs(spec)
 	if err != nil {
 		return err
 	}
@@ -142,12 +167,46 @@ func BuildDownArgs(spec ControlSpec) ([]string, error) {
 	return []string{"-S", spec.ControlSocket, "-O", "exit", spec.Target}, nil
 }
 
+func BuildForwardLocalArgs(spec ForwardSpec) ([]string, error) {
+	if spec.Target == "" {
+		return nil, errors.New("ssh target is required")
+	}
+	if spec.ControlSocket == "" {
+		return nil, errors.New("control socket is required")
+	}
+	if err := validatePort(spec.LocalPort); err != nil {
+		return nil, fmt.Errorf("invalid local port: %w", err)
+	}
+	if err := validatePort(spec.RemotePort); err != nil {
+		return nil, fmt.Errorf("invalid remote port: %w", err)
+	}
+	forward := fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", spec.LocalPort, spec.RemotePort)
+	return []string{"-S", spec.ControlSocket, "-O", "forward", "-L", forward, spec.Target}, nil
+}
+
+func BuildCancelLocalArgs(spec ForwardSpec) ([]string, error) {
+	if spec.Target == "" {
+		return nil, errors.New("ssh target is required")
+	}
+	if spec.ControlSocket == "" {
+		return nil, errors.New("control socket is required")
+	}
+	if err := validatePort(spec.LocalPort); err != nil {
+		return nil, fmt.Errorf("invalid local port: %w", err)
+	}
+	if err := validatePort(spec.RemotePort); err != nil {
+		return nil, fmt.Errorf("invalid remote port: %w", err)
+	}
+	forward := fmt.Sprintf("127.0.0.1:%d:127.0.0.1:%d", spec.LocalPort, spec.RemotePort)
+	return []string{"-S", spec.ControlSocket, "-O", "cancel", "-L", forward, spec.Target}, nil
+}
+
 func splitAndValidateLoopbackAddr(addr string) (int, error) {
 	host, portText, err := net.SplitHostPort(addr)
 	if err != nil {
 		return 0, err
 	}
-	if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+	if host != "127.0.0.1" && host != "localhost" {
 		return 0, errors.New("address must use a loopback host")
 	}
 	port, err := strconv.Atoi(portText)

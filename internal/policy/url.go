@@ -2,6 +2,7 @@ package policy
 
 import (
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
 	"strings"
@@ -46,6 +47,19 @@ func RedactForLog(raw string) string {
 	}
 	parsed.Fragment = ""
 	return parsed.String()
+}
+
+func IsLoopbackURL(parsed *url.URL) bool {
+	if parsed == nil {
+		return false
+	}
+	return isLoopbackHost(strings.ToLower(parsed.Hostname()))
+}
+
+func RewriteLoopbackURL(parsed *url.URL, localPort int) string {
+	clone := *parsed
+	clone.Host = net.JoinHostPort("127.0.0.1", fmt.Sprintf("%d", localPort))
+	return clone.String()
 }
 
 func isLoopbackHost(host string) bool {

@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"bob/internal/sshwrap"
@@ -21,9 +22,23 @@ import (
 const (
 	DefaultRemoteBobPort = 17331
 	DefaultLocalBobdAddr = "127.0.0.1:7331"
+	FallbackPortStart    = 43000
+	FallbackPortEnd      = 43999
+	HostClassLoopback    = "loopback"
 )
 
-var validNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+var (
+	validNamePattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+	ErrSessionNotFound = errors.New("session not found")
+)
+
+type Mapping struct {
+	RemoteHostClass string    `json:"remote_host_class"`
+	RemotePort      int       `json:"remote_port"`
+	LocalPort       int       `json:"local_port"`
+	CreatedAt       time.Time `json:"created_at"`
+	LastUsedAt      time.Time `json:"last_used_at"`
+}
 
 type State struct {
 	Name          string    `json:"name"`
@@ -32,6 +47,7 @@ type State struct {
 	RemoteBobPort int       `json:"remote_bob_port"`
 	LocalBobdAddr string    `json:"local_bobd"`
 	MirrorPorts   []int     `json:"mirror_ports,omitempty"`
+	Mappings      []Mapping `json:"mappings,omitempty"`
 	CreatedAt     time.Time `json:"created_at"`
 }
 
@@ -62,6 +78,7 @@ type Manager struct {
 	runner sshwrap.Runner
 	now    func() time.Time
 	paths  paths
+	locks  sync.Map
 }
 
 func NewManager(runner sshwrap.Runner) (*Manager, error) {
@@ -83,6 +100,10 @@ func (m *Manager) Up(ctx context.Context, opts UpOptions) (State, error) {
 	if err := ValidateName(opts.Name); err != nil {
 		return State{}, err
 	}
+	lock := m.sessionLock(opts.Name)
+	lock.Lock()
+	defer lock.Unlock()
+
 	if opts.SSHTarget == "" {
 		return State{}, errors.New("ssh target is required")
 	}
@@ -105,14 +126,15 @@ func (m *Manager) Up(ctx context.Context, opts UpOptions) (State, error) {
 		return State{}, err
 	}
 
+	now := m.now()
 	state := State{
 		Name:          opts.Name,
 		SSHTarget:     opts.SSHTarget,
 		ControlSocket: m.controlSocketPath(opts.Name),
 		RemoteBobPort: opts.RemoteBobPort,
 		LocalBobdAddr: opts.LocalBobdAddr,
-		MirrorPorts:   ports,
-		CreatedAt:     m.now(),
+		Mappings:      mappingsFromMirrorPorts(ports, now),
+		CreatedAt:     now,
 	}
 
 	if err := m.runner.Up(ctx, sshwrap.UpSpec{
@@ -120,7 +142,7 @@ func (m *Manager) Up(ctx context.Context, opts UpOptions) (State, error) {
 		ControlSocket: state.ControlSocket,
 		RemoteBobPort: state.RemoteBobPort,
 		LocalBobdAddr: state.LocalBobdAddr,
-		MirrorPorts:   state.MirrorPorts,
+		MirrorPorts:   ports,
 	}); err != nil {
 		return State{}, err
 	}
@@ -156,6 +178,10 @@ func (m *Manager) StatusAll(ctx context.Context) ([]StatusInfo, error) {
 }
 
 func (m *Manager) Down(ctx context.Context, name string) (DownResult, error) {
+	lock := m.sessionLock(name)
+	lock.Lock()
+	defer lock.Unlock()
+
 	state, err := m.load(name)
 	if err != nil {
 		return DownResult{}, err
@@ -170,7 +196,6 @@ func (m *Manager) Down(ctx context.Context, name string) (DownResult, error) {
 		return DownResult{}, err
 	}
 
-	stopped := true
 	if err := m.runner.Down(ctx, sshwrap.ControlSpec{Target: state.SSHTarget, ControlSocket: state.ControlSocket}); err != nil {
 		if _, statErr := os.Stat(state.ControlSocket); errors.Is(statErr, os.ErrNotExist) {
 			if cleanupErr := m.cleanupMetadata(state); cleanupErr != nil {
@@ -185,7 +210,83 @@ func (m *Manager) Down(ctx context.Context, name string) (DownResult, error) {
 		return DownResult{}, err
 	}
 
-	return DownResult{State: state, Stopped: stopped}, nil
+	return DownResult{State: state, Stopped: true}, nil
+}
+
+func (m *Manager) EnsureMirror(ctx context.Context, session string, remotePort int) (Mapping, bool, error) {
+	if err := ValidateName(session); err != nil {
+		return Mapping{}, false, err
+	}
+	lock := m.sessionLock(session)
+	lock.Lock()
+	defer lock.Unlock()
+
+	if err := validatePort(remotePort); err != nil {
+		return Mapping{}, false, err
+	}
+
+	state, err := m.load(session)
+	if err != nil {
+		return Mapping{}, false, err
+	}
+	if err := m.runner.Check(ctx, sshwrap.ControlSpec{Target: state.SSHTarget, ControlSocket: state.ControlSocket}); err != nil {
+		return Mapping{}, false, fmt.Errorf("session %q is not active: %w", session, err)
+	}
+
+	now := m.now()
+	for i, mapping := range state.Mappings {
+		if mapping.RemoteHostClass == HostClassLoopback && mapping.RemotePort == remotePort {
+			state.Mappings[i].LastUsedAt = now
+			_ = writeState(m.statePath(session), state)
+			return state.Mappings[i], true, nil
+		}
+	}
+
+	usedLocalPorts := make(map[int]struct{}, len(state.Mappings))
+	for _, mapping := range state.Mappings {
+		usedLocalPorts[mapping.LocalPort] = struct{}{}
+	}
+
+	candidates := candidateLocalPorts(remotePort, usedLocalPorts)
+	var lastErr error
+	for _, localPort := range candidates {
+		spec := sshwrap.ForwardSpec{
+			Target:        state.SSHTarget,
+			ControlSocket: state.ControlSocket,
+			LocalPort:     localPort,
+			RemotePort:    remotePort,
+		}
+		if err := m.runner.ForwardLocal(ctx, spec); err != nil {
+			if isPortConflictError(err) {
+				lastErr = err
+				continue
+			}
+			return Mapping{}, false, err
+		}
+
+		mapping := Mapping{
+			RemoteHostClass: HostClassLoopback,
+			RemotePort:      remotePort,
+			LocalPort:       localPort,
+			CreatedAt:       now,
+			LastUsedAt:      now,
+		}
+		state.Mappings = append(state.Mappings, mapping)
+		state.Mappings = normalizeMappings(state.Mappings)
+		if err := writeState(m.statePath(session), state); err != nil {
+			cleanupErr := m.runner.CancelLocal(ctx, spec)
+			if cleanupErr != nil {
+				return Mapping{}, false, fmt.Errorf("%w; cleanup also failed: %v", err, cleanupErr)
+			}
+			return Mapping{}, false, err
+		}
+		return mapping, false, nil
+	}
+
+	if lastErr != nil {
+		return Mapping{}, false, fmt.Errorf("failed to allocate local mirror for remote port %d: %w", remotePort, lastErr)
+	}
+	return Mapping{}, false, fmt.Errorf("failed to allocate local mirror for remote port %d", remotePort)
 }
 
 func (m *Manager) check(ctx context.Context, state State) StatusInfo {
@@ -203,14 +304,16 @@ func (m *Manager) load(name string) (State, error) {
 	path := m.statePath(name)
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return State{}, ErrSessionNotFound
+		}
 		return State{}, err
 	}
 	var state State
 	if err := json.Unmarshal(data, &state); err != nil {
 		return State{}, err
 	}
-	state.MirrorPorts = normalizePorts(state.MirrorPorts)
-	return state, nil
+	return normalizeState(state), nil
 }
 
 func (m *Manager) list() ([]State, error) {
@@ -235,8 +338,7 @@ func (m *Manager) list() ([]State, error) {
 		if err := json.Unmarshal(data, &state); err != nil {
 			return nil, err
 		}
-		state.MirrorPorts = normalizePorts(state.MirrorPorts)
-		states = append(states, state)
+		states = append(states, normalizeState(state))
 	}
 	sort.Slice(states, func(i, j int) bool {
 		return states[i].Name < states[j].Name
@@ -296,6 +398,11 @@ func (m *Manager) removeSocket(path string) error {
 	return nil
 }
 
+func (m *Manager) sessionLock(name string) *sync.Mutex {
+	lock, _ := m.locks.LoadOrStore(name, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
 type paths struct {
 	rootDir    string
 	tunnelsDir string
@@ -342,8 +449,8 @@ func ParsePort(value string) (int, error) {
 	if err != nil {
 		return 0, errors.New("port must be an integer")
 	}
-	if port < 1 || port > 65535 {
-		return 0, errors.New("port must be between 1 and 65535")
+	if err := validatePort(port); err != nil {
+		return 0, err
 	}
 	return port, nil
 }
@@ -364,7 +471,87 @@ func normalizePorts(ports []int) []int {
 	return out
 }
 
+func normalizeMappings(mappings []Mapping) []Mapping {
+	if len(mappings) == 0 {
+		return nil
+	}
+	byRemotePort := make(map[int]Mapping, len(mappings))
+	for _, mapping := range mappings {
+		if mapping.RemoteHostClass == "" {
+			mapping.RemoteHostClass = HostClassLoopback
+		}
+		byRemotePort[mapping.RemotePort] = mapping
+	}
+	out := make([]Mapping, 0, len(byRemotePort))
+	for _, mapping := range byRemotePort {
+		out = append(out, mapping)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].RemotePort < out[j].RemotePort
+	})
+	return out
+}
+
+func normalizeState(state State) State {
+	state.MirrorPorts = normalizePorts(state.MirrorPorts)
+	state.Mappings = normalizeMappings(state.Mappings)
+	if len(state.MirrorPorts) > 0 {
+		migrated := mappingsFromMirrorPorts(state.MirrorPorts, state.CreatedAt)
+		state.Mappings = normalizeMappings(append(state.Mappings, migrated...))
+		state.MirrorPorts = nil
+	}
+	return state
+}
+
+func mappingsFromMirrorPorts(ports []int, now time.Time) []Mapping {
+	ports = normalizePorts(ports)
+	mappings := make([]Mapping, 0, len(ports))
+	for _, port := range ports {
+		mappings = append(mappings, Mapping{
+			RemoteHostClass: HostClassLoopback,
+			RemotePort:      port,
+			LocalPort:       port,
+			CreatedAt:       now,
+			LastUsedAt:      now,
+		})
+	}
+	return mappings
+}
+
+func candidateLocalPorts(remotePort int, used map[int]struct{}) []int {
+	ports := make([]int, 0, (FallbackPortEnd-FallbackPortStart)+2)
+	if _, exists := used[remotePort]; !exists {
+		ports = append(ports, remotePort)
+	}
+	for port := FallbackPortStart; port <= FallbackPortEnd; port++ {
+		if port == remotePort {
+			continue
+		}
+		if _, exists := used[port]; exists {
+			continue
+		}
+		ports = append(ports, port)
+	}
+	return ports
+}
+
+func validatePort(port int) error {
+	if port < 1 || port > 65535 {
+		return errors.New("port must be between 1 and 65535")
+	}
+	return nil
+}
+
+func isPortConflictError(err error) bool {
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "address already in use") ||
+		strings.Contains(message, "cannot listen to port") ||
+		strings.Contains(message, "port forwarding failed")
+}
+
 func writeState(path string, state State) error {
+	state = normalizeState(state)
+	state.MirrorPorts = nil
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err != nil {
 		return err

@@ -8,6 +8,7 @@ import (
 
 	"bob/internal/client"
 	"bob/internal/config"
+	"bob/internal/policy"
 )
 
 func main() {
@@ -45,14 +46,27 @@ func runOpen(args []string, stderr io.Writer) int {
 
 	rawURL := args[0]
 	cfg := config.LoadCLIFromEnv()
+	requiresSession := false
+	if parsed, err := policy.NormalizeAndValidate(rawURL, false); err == nil {
+		requiresSession = policy.IsLoopbackURL(parsed)
+	}
+	if requiresSession && cfg.Session == "" {
+		fmt.Fprintln(stderr, "BOB_SESSION is required; set it to the tunnel name from 'bob tunnel up'.")
+		return 1
+	}
 	cli := client.New(cfg.Endpoint, cfg.Token, cfg.Timeout)
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)
 	defer cancel()
 
-	resp, err := cli.Open(ctx, rawURL)
+	resp, err := cli.Open(ctx, rawURL, cfg.Session)
 	if err == nil && resp != nil && resp.OK {
 		return 0
+	}
+
+	displayURL := rawURL
+	if resp != nil && resp.OpenedURL != "" {
+		displayURL = resp.OpenedURL
 	}
 
 	fmt.Fprintln(stderr, "Could not open local browser automatically.")
@@ -69,8 +83,12 @@ func runOpen(args []string, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "Reason: %s\n", resp.Status)
 		}
 	}
-	fmt.Fprintln(stderr, "Open this URL on your local machine:")
-	fmt.Fprintln(stderr, rawURL)
+	if !(requiresSession && resp != nil && (resp.Status == "SESSION_REQUIRED" || resp.Status == "SESSION_NOT_FOUND" || resp.Status == "MIRROR_FAILED")) {
+		fmt.Fprintln(stderr, "Open this URL on your local machine:")
+		fmt.Fprintln(stderr, displayURL)
+	} else {
+		fmt.Fprintln(stderr, "This loopback URL needs an active bob session mirror. Check BOB_SESSION and 'bob tunnel status'.")
+	}
 
 	if err == nil && resp != nil {
 		switch resp.Status {
@@ -118,6 +136,7 @@ Usage:
 Environment:
   BOB_ENDPOINT  Forwarded bobd endpoint (default: http://127.0.0.1:17331)
   BOB_TOKEN     Bearer token shared with bobd
+  BOB_SESSION   Tunnel/session name used for auto-mirror
   BOB_TIMEOUT   Request timeout (default: 5s)
 `)
 }

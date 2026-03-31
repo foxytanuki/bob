@@ -10,6 +10,7 @@ const defaultCLIEndpoint = "http://127.0.0.1:17331"
 type CLI struct {
 	Endpoint string
 	Token    string
+	Session  string
 	Timeout  time.Duration
 }
 
@@ -27,6 +28,7 @@ func LoadCLIFromEnv() CLI {
 	return CLI{
 		Endpoint: endpoint,
 		Token:    token,
+		Session:  os.Getenv("BOB_SESSION"),
 		Timeout:  timeout,
 	}
 }

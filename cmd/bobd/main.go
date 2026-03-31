@@ -14,6 +14,8 @@ import (
 	"bob/internal/config"
 	"bob/internal/opener"
 	"bob/internal/server"
+	"bob/internal/sshwrap"
+	"bob/internal/tunnel"
 	"bob/internal/version"
 )
 
@@ -50,7 +52,17 @@ func runServe(stderr io.Writer) int {
 	}
 
 	logger := log.New(stderr, "bobd: ", log.LstdFlags)
-	handler := server.NewHandler(cfg, opener.New(), logger)
+	var mgr *tunnel.Manager
+	runner, err := sshwrap.NewOpenSSH()
+	if err != nil {
+		logger.Printf("warning: auto-mirror unavailable: %v", err)
+	} else {
+		mgr, err = tunnel.NewManager(runner)
+		if err != nil {
+			logger.Printf("warning: auto-mirror unavailable: %v", err)
+		}
+	}
+	handler := server.NewHandler(cfg, opener.New(), mgr, logger)
 	srv := &http.Server{
 		Addr:              cfg.Bind,
 		Handler:           handler,
