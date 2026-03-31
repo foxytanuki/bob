@@ -46,13 +46,19 @@ Current limitations:
 ## Build
 
 ```bash
-make build
+just build
 ```
 
 Install to `~/.local/bin`:
 
 ```bash
-make install
+just install
+```
+
+Custom install dir:
+
+```bash
+just install BINDIR=/custom/bin
 ```
 
 Or:
