@@ -49,6 +49,12 @@ Current limitations:
 make build
 ```
 
+Install to `~/.local/bin`:
+
+```bash
+make install
+```
+
 Or:
 
 ```bash
