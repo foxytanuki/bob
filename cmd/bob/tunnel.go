@@ -38,6 +38,7 @@ func runTunnel(args []string, stdout, stderr io.Writer) int {
 }
 
 func runTunnelUp(args []string, stdout, stderr io.Writer) int {
+	name, remainingArgs := splitLeadingName(args)
 	fs := flag.NewFlagSet("bob tunnel up", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	sshTarget := fs.String("ssh", "", "SSH target, e.g. user@remote-host")
@@ -49,10 +50,17 @@ func runTunnelUp(args []string, stdout, stderr io.Writer) int {
 		_, _ = io.WriteString(stderr, "Usage: bob tunnel up <name> --ssh <target> [--mirror <port>]... [--remote-bob-port 17331] [--local-bobd 127.0.0.1:7331]\n")
 	}
 
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(remainingArgs); err != nil {
 		return 1
 	}
-	if fs.NArg() != 1 {
+	if name == "" {
+		if fs.NArg() == 1 {
+			name = fs.Arg(0)
+		} else {
+			fs.Usage()
+			return 1
+		}
+	} else if fs.NArg() != 0 {
 		fs.Usage()
 		return 1
 	}
@@ -76,7 +84,7 @@ func runTunnelUp(args []string, stdout, stderr io.Writer) int {
 	defer cancel()
 
 	state, err := mgr.Up(ctx, tunnel.UpOptions{
-		Name:          fs.Arg(0),
+		Name:          name,
 		SSHTarget:     *sshTarget,
 		RemoteBobPort: *remoteBobPort,
 		LocalBobdAddr: *localBobd,
@@ -217,6 +225,13 @@ Examples:
   bob tunnel status devbox
   bob tunnel down devbox
 `)
+}
+
+func splitLeadingName(args []string) (string, []string) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return "", args
+	}
+	return args[0], args[1:]
 }
 
 func printTunnelDetails(w io.Writer, status tunnel.StatusInfo) {
