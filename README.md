@@ -4,49 +4,112 @@ Remote→Local browser open bridge.
 
 ## What it is
 
-`bob` is a generic helper for remote development workflows where a process running on a remote machine wants to open a URL in the user's local browser.
+`bob` lets a process running on a remote machine ask your local machine to open a URL in your local browser.
 
-Examples:
-
-- Vite dev server on SSH/devcontainer
-- coding agents that launch local review UIs
-- docs preview servers
-- internal dashboards and local tools
-
-Instead of trying to open a browser on the remote machine, a remote CLI forwards an `open_url` request to a local daemon, which validates it and opens the user's browser locally.
-
-## MVP shape
+MVP flow:
 
 ```text
-Remote app -> bob CLI -> SSH tunnel -> bobd local daemon -> local browser
+Remote app/tool -> bob CLI -> forwarded endpoint -> bobd local daemon -> local browser
 ```
 
-## Components
+Where:
 
-- `bob`: remote bridge CLI
-- `bobd`: local daemon
-- transport: SSH first, Tailscale/relay later
+- `bob` is the remote CLI
+- `bobd` is the local daemon
+- `forwarded endpoint` is the URL visible from the remote side that already reaches local `bobd`
 
-## Goals
+Example:
 
-- app-agnostic
-- SSH/devcontainer friendly
-- safe fallback when the daemon is unavailable
-- no cloud dependency for MVP
+```text
+local bobd listens on 127.0.0.1:7331
+SSH makes that reachable on the remote side as 127.0.0.1:17331
+remote bob sends POST http://127.0.0.1:17331/open
+```
 
-## Non-goals
+## Status
 
-- app-specific integrations first
-- relay/SaaS first
-- full UI/admin surface first
+This repository now contains a minimal Go MVP scaffold:
 
-## Planned behavior
+- `bob open <url>`
+- `bob doctor`
+- `bobd serve`
+- `bobd init`
 
-1. Remote tool calls `bob open <url>`
-2. `bob` sends an authenticated request to `bobd`
-3. `bobd` validates the request and opens the local browser
-4. If the request fails, `bob` prints the URL so the user can open it manually
+Current limitations:
+
+- SSH tunnel creation is out of scope for MVP
+- duplicate suppression is not implemented yet
+- default policy is localhost-only
+
+## Build
+
+```bash
+make build
+```
+
+Or:
+
+```bash
+go build ./...
+```
+
+## Quick start
+
+1. Generate a shared token:
+
+```bash
+bobd init
+```
+
+2. On the local machine:
+
+```bash
+export BOBD_TOKEN=...
+bobd serve
+```
+
+3. Create a port forward so the remote machine can reach local `bobd`
+
+Example:
+
+```bash
+ssh -R 17331:127.0.0.1:7331 user@remote-host
+```
+
+4. On the remote machine:
+
+```bash
+export BOB_ENDPOINT=http://127.0.0.1:17331
+export BOB_TOKEN=...
+bob doctor
+bob open http://127.0.0.1:5173
+```
+
+Important:
+
+- `BOB_ENDPOINT` only points to `bobd`.
+- The target app URL itself must already be reachable from the local machine.
+- If your app is running remotely on `127.0.0.1:5173`, you usually need a **separate port forward** for that app too.
+
+If automatic opening fails, `bob open` prints the URL so the user can open it manually.
+
+## Environment
+
+### Remote CLI
+
+- `BOB_ENDPOINT` default: `http://127.0.0.1:17331`
+- `BOB_TOKEN`
+- `BOB_TIMEOUT` default: `5s`
+
+### Local daemon
+
+- `BOBD_BIND` default: `127.0.0.1:7331`
+- `BOBD_TOKEN` required
+- `BOBD_LOCALHOST_ONLY` default: `true`
 
 ## Docs
 
 - [PLAN.md](./PLAN.md)
+- [docs/protocol.md](./docs/protocol.md)
+- [docs/setup-ssh.md](./docs/setup-ssh.md)
+- [docs/security.md](./docs/security.md)
