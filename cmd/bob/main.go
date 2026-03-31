@@ -20,6 +20,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		printUsage(stderr)
 		return 1
 	}
+	if len(args) == 1 && looksLikeURL(args[0]) {
+		return runOpen(args, stderr)
+	}
 
 	switch args[0] {
 	case "open":
@@ -129,6 +132,7 @@ func printUsage(w io.Writer) {
 	_, _ = io.WriteString(w, `bob - remote to local browser open bridge
 
 Usage:
+  bob <url>
   bob open <url>
   bob doctor
   bob tunnel <subcommand>
@@ -139,4 +143,9 @@ Environment:
   BOB_SESSION   Tunnel/session name used for auto-mirror
   BOB_TIMEOUT   Request timeout (default: 5s)
 `)
+}
+
+func looksLikeURL(value string) bool {
+	parsed, err := policy.NormalizeAndValidate(value, false)
+	return err == nil && parsed != nil
 }

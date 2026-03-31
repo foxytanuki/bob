@@ -30,6 +30,7 @@ remote bob sends POST http://127.0.0.1:17331/open
 
 This repository now contains a minimal Go MVP scaffold:
 
+- `bob <url>`
 - `bob open <url>`
 - `bob doctor`
 - `bob tunnel up/status/down`
