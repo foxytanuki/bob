@@ -32,12 +32,13 @@ This repository now contains a minimal Go MVP scaffold:
 
 - `bob open <url>`
 - `bob doctor`
+- `bob tunnel up/status/down`
 - `bobd serve`
 - `bobd init`
 
 Current limitations:
 
-- SSH tunnel creation is out of scope for MVP
+- `bob tunnel` supports same-port SSH forwarding, but auto-tunnel from `bob open` is not implemented yet
 - duplicate suppression is not implemented yet
 - default policy is localhost-only
 
@@ -70,10 +71,16 @@ bobd serve
 
 3. Create a port forward so the remote machine can reach local `bobd`
 
-Example:
+Manual SSH example:
 
 ```bash
 ssh -R 17331:127.0.0.1:7331 user@remote-host
+```
+
+Or via `bob tunnel` on the local machine:
+
+```bash
+bob tunnel up devbox --ssh user@remote-host --mirror 5173
 ```
 
 4. On the remote machine:
@@ -89,7 +96,8 @@ Important:
 
 - `BOB_ENDPOINT` only points to `bobd`.
 - The target app URL itself must already be reachable from the local machine.
-- If your app is running remotely on `127.0.0.1:5173`, you usually need a **separate port forward** for that app too.
+- If your app is running remotely on `127.0.0.1:5173`, you usually need a **separate app forward** too.
+- `bob tunnel up ... --mirror 5173` creates that same-port app mirror automatically.
 
 If automatic opening fails, `bob open` prints the URL so the user can open it manually.
 
@@ -112,4 +120,5 @@ If automatic opening fails, `bob open` prints the URL so the user can open it ma
 - [PLAN.md](./PLAN.md)
 - [docs/protocol.md](./docs/protocol.md)
 - [docs/setup-ssh.md](./docs/setup-ssh.md)
+- [docs/tunnel.md](./docs/tunnel.md)
 - [docs/security.md](./docs/security.md)

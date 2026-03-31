@@ -25,6 +25,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runOpen(args[1:], stderr)
 	case "doctor":
 		return runDoctor(stdout, stderr)
+	case "tunnel":
+		return runTunnel(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
 		printUsage(stdout)
 		return 0
@@ -111,6 +113,7 @@ func printUsage(w io.Writer) {
 Usage:
   bob open <url>
   bob doctor
+  bob tunnel <subcommand>
 
 Environment:
   BOB_ENDPOINT  Forwarded bobd endpoint (default: http://127.0.0.1:17331)
