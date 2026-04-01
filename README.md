@@ -49,6 +49,12 @@ Current limitations:
 just build
 ```
 
+Version を埋めてビルド:
+
+```bash
+VERSION=v0.1.0 just build
+```
+
 Install to `~/.local/bin`:
 
 ```bash
@@ -65,6 +71,32 @@ Or:
 
 ```bash
 go build ./...
+```
+
+CLI 版番号確認:
+
+```bash
+bob version
+bobd version
+```
+
+## Versioning
+
+- Git tag は `vX.Y.Z` 形式
+- アプリ版番号は SemVer を採用
+- 開発中ビルドのデフォルト値は `dev`
+
+例:
+
+```bash
+VERSION=v0.1.0 just build-binaries
+git tag v0.1.0
+```
+
+必要なら commit/date も埋め込めます:
+
+```bash
+VERSION=v0.1.0 COMMIT=$(git rev-parse --short HEAD) DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) just build-binaries
 ```
 
 ## Quick start

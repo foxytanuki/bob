@@ -9,6 +9,7 @@ import (
 	"bob/internal/client"
 	"bob/internal/config"
 	"bob/internal/policy"
+	"bob/internal/version"
 )
 
 func main() {
@@ -29,6 +30,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runOpen(args[1:], stderr)
 	case "doctor":
 		return runDoctor(stdout, stderr)
+	case "version", "--version", "-v":
+		return runVersion(args, stdout, stderr, "bob")
 	case "tunnel":
 		return runTunnel(args[1:], stdout, stderr)
 	case "help", "--help", "-h":
@@ -128,6 +131,15 @@ func runDoctor(stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runVersion(args []string, stdout, stderr io.Writer, name string) int {
+	if len(args) != 1 {
+		fmt.Fprintf(stderr, "usage: %s version\n", name)
+		return 1
+	}
+	version.Write(stdout, name)
+	return 0
+}
+
 func printUsage(w io.Writer) {
 	_, _ = io.WriteString(w, `bob - remote to local browser open bridge
 
@@ -135,6 +147,7 @@ Usage:
   bob <url>
   bob open <url>
   bob doctor
+  bob version
   bob tunnel <subcommand>
 
 Environment:

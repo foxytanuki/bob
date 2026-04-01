@@ -47,6 +47,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return runServe(args[1:], stderr)
 	case "init":
 		return runInit(stdout, stderr)
+	case "version", "--version", "-v":
+		return runVersion(args, stdout, stderr, "bobd")
 	case "help", "--help", "-h":
 		printUsage(stdout)
 		return 0
@@ -204,12 +206,22 @@ func generateToken() (string, error) {
 	return hex.EncodeToString(buf), nil
 }
 
+func runVersion(args []string, stdout, stderr io.Writer, name string) int {
+	if len(args) != 1 {
+		fmt.Fprintf(stderr, "usage: %s version\n", name)
+		return 1
+	}
+	version.Write(stdout, name)
+	return 0
+}
+
 func printUsage(w io.Writer) {
 	_, _ = io.WriteString(w, `bobd - local daemon for bob
 
 Usage:
   bobd serve [--tunnel-name <name> --ssh <target>] [--remote-bob-port 17331] [--local-bobd 127.0.0.1:7331]
   bobd init
+  bobd version
 
 Environment:
   BOBD_BIND            Listen address (default: 127.0.0.1:7331)
