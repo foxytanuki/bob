@@ -45,11 +45,13 @@ Current limitations:
 
 ## Build
 
+Build with the default development version:
+
 ```bash
 just build
 ```
 
-Version を埋めてビルド:
+Build with an explicit version:
 
 ```bash
 VERSION=v0.1.0 just build
@@ -61,19 +63,19 @@ Install to `~/.local/bin`:
 just install
 ```
 
-Custom install dir:
+Install to a custom directory:
 
 ```bash
 just install BINDIR=/custom/bin
 ```
 
-Or:
+Or build directly with Go:
 
 ```bash
 go build ./...
 ```
 
-CLI 版番号確認:
+Check CLI versions:
 
 ```bash
 bob version
@@ -82,18 +84,18 @@ bobd version
 
 ## Versioning
 
-- Git tag は `vX.Y.Z` 形式
-- アプリ版番号は SemVer を採用
-- 開発中ビルドのデフォルト値は `dev`
+- Git tags use the `vX.Y.Z` format.
+- Application versions follow SemVer.
+- Development builds default to `dev`.
 
-例:
+Example release build:
 
 ```bash
 VERSION=v0.1.0 just build-binaries
 git tag v0.1.0
 ```
 
-必要なら commit/date も埋め込めます:
+Include commit and build date if needed:
 
 ```bash
 VERSION=v0.1.0 COMMIT=$(git rev-parse --short HEAD) DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) just build-binaries
@@ -141,8 +143,8 @@ bob tunnel up devbox --ssh user@remote-host
 Important:
 
 - `BOB_ENDPOINT` only points to `bobd`.
-- loopback app URLs can now be mirrored automatically after the control tunnel exists.
-- if the same local port is busy, `bobd` may allocate another local port and rewrite the opened URL.
+- Loopback app URLs can be mirrored automatically after the control tunnel exists.
+- If the same local port is busy, `bobd` may allocate another local port and rewrite the opened URL.
 
 If automatic opening fails, `bob open` prints the URL so the user can open it manually.
 

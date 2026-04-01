@@ -56,10 +56,11 @@ bobd serve
 bob tunnel up devbox --ssh user@remote-host
 ```
 
-This creates:
+This creates the control tunnel:
 
 - remote `127.0.0.1:17331` -> local `127.0.0.1:7331` for `bob -> bobd`
-- local `127.0.0.1:5173` -> remote `127.0.0.1:5173` for browser -> app
+
+Additional app mirrors are created by `bobd` on demand when `bob open` receives a loopback URL for the same `BOB_SESSION`.
 
 Then on the remote machine:
 
@@ -71,7 +72,9 @@ bob doctor
 bob open http://127.0.0.1:5173
 ```
 
-`bobd` will ensure a local mirror for loopback app URLs on demand. If local port `5173` is busy, it may choose another local port and open that rewritten URL.
+`bobd` will ensure a local mirror for loopback app URLs on demand. If local port `5173` is free, it may reuse that port locally. If it is busy, it may choose another local port and open that rewritten URL.
+
+If you want to pin a specific mirror up front instead, add one or more `--mirror <port>` flags when creating the tunnel.
 
 To inspect or stop the tunnel later:
 
