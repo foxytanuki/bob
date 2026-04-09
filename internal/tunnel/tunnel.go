@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"bob/internal/sshwrap"
@@ -81,6 +82,22 @@ type Manager struct {
 	locks  sync.Map
 }
 
+type fileLock struct {
+	file *os.File
+}
+
+func (l *fileLock) Unlock() error {
+	if l == nil || l.file == nil {
+		return nil
+	}
+	defer l.file.Close()
+	if err := syscall.Flock(int(l.file.Fd()), syscall.LOCK_UN); err != nil {
+		return err
+	}
+	l.file = nil
+	return nil
+}
+
 func NewManager(runner sshwrap.Runner) (*Manager, error) {
 	if runner == nil {
 		return nil, errors.New("ssh runner is required")
@@ -103,6 +120,16 @@ func (m *Manager) Up(ctx context.Context, opts UpOptions) (State, error) {
 	lock := m.sessionLock(opts.Name)
 	lock.Lock()
 	defer lock.Unlock()
+	fl, err := m.sessionFileLock(opts.Name, true)
+	if err != nil {
+		return State{}, err
+	}
+	defer fl.Unlock()
+	gfl, err := m.globalFileLock(true)
+	if err != nil {
+		return State{}, err
+	}
+	defer gfl.Unlock()
 
 	if opts.SSHTarget == "" {
 		return State{}, errors.New("ssh target is required")
@@ -120,9 +147,16 @@ func (m *Manager) Up(ctx context.Context, opts UpOptions) (State, error) {
 	}
 
 	statePath := m.statePath(opts.Name)
-	if _, err := os.Stat(statePath); err == nil {
-		return State{}, fmt.Errorf("tunnel %q already exists", opts.Name)
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if existing, err := m.load(opts.Name); err == nil {
+		if err := m.runner.Check(ctx, sshwrap.ControlSpec{Target: existing.SSHTarget, ControlSocket: existing.ControlSocket}); err == nil {
+			return State{}, fmt.Errorf("tunnel %q already exists", opts.Name)
+		} else if !isStaleCheckError(existing.ControlSocket, err) {
+			return State{}, err
+		}
+		if err := m.cleanupMetadata(existing); err != nil {
+			return State{}, err
+		}
+	} else if !errors.Is(err, ErrSessionNotFound) {
 		return State{}, err
 	}
 
@@ -158,6 +192,11 @@ func (m *Manager) Up(ctx context.Context, opts UpOptions) (State, error) {
 }
 
 func (m *Manager) Status(ctx context.Context, name string) (StatusInfo, error) {
+	fl, err := m.sessionFileLock(name, false)
+	if err != nil {
+		return StatusInfo{}, err
+	}
+	defer fl.Unlock()
 	state, err := m.load(name)
 	if err != nil {
 		return StatusInfo{}, err
@@ -166,6 +205,11 @@ func (m *Manager) Status(ctx context.Context, name string) (StatusInfo, error) {
 }
 
 func (m *Manager) StatusAll(ctx context.Context) ([]StatusInfo, error) {
+	fl, err := m.globalFileLock(false)
+	if err != nil {
+		return nil, err
+	}
+	defer fl.Unlock()
 	states, err := m.list()
 	if err != nil {
 		return nil, err
@@ -181,6 +225,16 @@ func (m *Manager) Down(ctx context.Context, name string) (DownResult, error) {
 	lock := m.sessionLock(name)
 	lock.Lock()
 	defer lock.Unlock()
+	fl, err := m.sessionFileLock(name, true)
+	if err != nil {
+		return DownResult{}, err
+	}
+	defer fl.Unlock()
+	gfl, err := m.globalFileLock(true)
+	if err != nil {
+		return DownResult{}, err
+	}
+	defer gfl.Unlock()
 
 	state, err := m.load(name)
 	if err != nil {
@@ -220,6 +274,11 @@ func (m *Manager) EnsureMirror(ctx context.Context, session string, remotePort i
 	lock := m.sessionLock(session)
 	lock.Lock()
 	defer lock.Unlock()
+	fl, err := m.sessionFileLock(session, true)
+	if err != nil {
+		return Mapping{}, false, err
+	}
+	defer fl.Unlock()
 
 	if err := validatePort(remotePort); err != nil {
 		return Mapping{}, false, err
@@ -230,7 +289,14 @@ func (m *Manager) EnsureMirror(ctx context.Context, session string, remotePort i
 		return Mapping{}, false, err
 	}
 	if err := m.runner.Check(ctx, sshwrap.ControlSpec{Target: state.SSHTarget, ControlSocket: state.ControlSocket}); err != nil {
-		return Mapping{}, false, fmt.Errorf("session %q is not active: %w", session, err)
+		if !isStaleCheckError(state.ControlSocket, err) {
+			return Mapping{}, false, fmt.Errorf("failed to verify session %q: %w", session, err)
+		}
+		if recovered, recErr := m.recoverSession(ctx, state); recErr == nil {
+			state = recovered
+		} else {
+			return Mapping{}, false, fmt.Errorf("session %q is not active: %w (recovery failed: %v)", session, err, recErr)
+		}
 	}
 
 	now := m.now()
@@ -289,6 +355,47 @@ func (m *Manager) EnsureMirror(ctx context.Context, session string, remotePort i
 	return Mapping{}, false, fmt.Errorf("failed to allocate local mirror for remote port %d", remotePort)
 }
 
+func (m *Manager) recoverSession(ctx context.Context, state State) (State, error) {
+	if err := m.removeSocket(state.ControlSocket); err != nil {
+		return State{}, err
+	}
+	if state.RemoteBobPort == 0 {
+		state.RemoteBobPort = DefaultRemoteBobPort
+	}
+	if state.LocalBobdAddr == "" {
+		state.LocalBobdAddr = DefaultLocalBobdAddr
+	}
+	ctxUp, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	mirrorPorts := make([]int, 0, len(state.Mappings))
+	for _, mapping := range state.Mappings {
+		if mapping.LocalPort == mapping.RemotePort {
+			mirrorPorts = append(mirrorPorts, mapping.RemotePort)
+		}
+	}
+	if err := m.runner.Up(ctxUp, sshwrap.UpSpec{Target: state.SSHTarget, ControlSocket: state.ControlSocket, RemoteBobPort: state.RemoteBobPort, LocalBobdAddr: state.LocalBobdAddr, MirrorPorts: mirrorPorts}); err != nil {
+		return State{}, err
+	}
+	for _, mapping := range state.Mappings {
+		if mapping.LocalPort == mapping.RemotePort {
+			continue
+		}
+		if err := m.runner.ForwardLocal(ctxUp, sshwrap.ForwardSpec{Target: state.SSHTarget, ControlSocket: state.ControlSocket, LocalPort: mapping.LocalPort, RemotePort: mapping.RemotePort}); err != nil {
+			if downErr := m.runner.Down(ctxUp, sshwrap.ControlSpec{Target: state.SSHTarget, ControlSocket: state.ControlSocket}); downErr != nil {
+				return State{}, fmt.Errorf("%w; rollback failed: %v", err, downErr)
+			}
+			return State{}, err
+		}
+	}
+	if err := writeState(m.statePath(state.Name), state); err != nil {
+		if downErr := m.runner.Down(ctxUp, sshwrap.ControlSpec{Target: state.SSHTarget, ControlSocket: state.ControlSocket}); downErr != nil {
+			return State{}, fmt.Errorf("%w; rollback failed: %v", err, downErr)
+		}
+		return State{}, err
+	}
+	return state, nil
+}
+
 func (m *Manager) check(ctx context.Context, state State) StatusInfo {
 	err := m.runner.Check(ctx, sshwrap.ControlSpec{Target: state.SSHTarget, ControlSocket: state.ControlSocket})
 	if err != nil {
@@ -332,6 +439,9 @@ func (m *Manager) list() ([]State, error) {
 		path := filepath.Join(m.paths.tunnelsDir, entry.Name())
 		data, err := os.ReadFile(path)
 		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
 			return nil, err
 		}
 		var state State
@@ -359,6 +469,10 @@ func (m *Manager) statePath(name string) string {
 	return filepath.Join(m.paths.tunnelsDir, name+".json")
 }
 
+func (m *Manager) lockPath(name string) string {
+	return filepath.Join(m.paths.controlDir, name+".lock")
+}
+
 func (m *Manager) controlSocketPath(name string) string {
 	prefix := name
 	if len(prefix) > 20 {
@@ -379,6 +493,49 @@ func (m *Manager) cleanupFailedUp(state State) error {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
+}
+
+func (m *Manager) sessionFileLock(name string, write bool) (*fileLock, error) {
+	if err := ValidateName(name); err != nil {
+		return nil, err
+	}
+	if err := m.ensureDirs(); err != nil {
+		return nil, err
+	}
+	path := m.lockPath(name)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	flags := syscall.LOCK_SH
+	if write {
+		flags = syscall.LOCK_EX
+	}
+	if err := syscall.Flock(int(f.Fd()), flags); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return &fileLock{file: f}, nil
+}
+
+func (m *Manager) globalFileLock(write bool) (*fileLock, error) {
+	if err := m.ensureDirs(); err != nil {
+		return nil, err
+	}
+	path := filepath.Join(m.paths.rootDir, "tunnels.lock")
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	flags := syscall.LOCK_SH
+	if write {
+		flags = syscall.LOCK_EX
+	}
+	if err := syscall.Flock(int(f.Fd()), flags); err != nil {
+		f.Close()
+		return nil, err
+	}
+	return &fileLock{file: f}, nil
 }
 
 func (m *Manager) cleanupMetadata(state State) error {
@@ -543,10 +700,30 @@ func validatePort(port int) error {
 }
 
 func isPortConflictError(err error) bool {
+	if err == nil {
+		return false
+	}
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "address already in use") ||
 		strings.Contains(message, "cannot listen to port") ||
 		strings.Contains(message, "port forwarding failed")
+}
+
+func isStaleCheckError(controlSocket string, err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	if _, statErr := os.Stat(controlSocket); errors.Is(statErr, os.ErrNotExist) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "control socket connect") ||
+		strings.Contains(message, "master is not running") ||
+		strings.Contains(message, "no such file or directory") ||
+		strings.Contains(message, "connection refused")
 }
 
 func writeState(path string, state State) error {
@@ -556,5 +733,13 @@ func writeState(path string, state State) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o600)
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, append(data, '\n'), 0o600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	return nil
 }
