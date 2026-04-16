@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"io"
 	"log"
 	"net/http"
@@ -9,26 +8,23 @@ import (
 	"bob/internal/auth"
 	"bob/internal/config"
 	"bob/internal/opener"
+	"bob/internal/openflow"
 	"bob/internal/protocol"
-	"bob/internal/tunnel"
 )
 
-type MirrorManager interface {
-	EnsureMirror(ctx context.Context, session string, remotePort int) (tunnel.Mapping, bool, error)
-}
-
 type Handler struct {
-	config config.Daemon
-	opener opener.Opener
-	tunnel MirrorManager
-	logger *log.Logger
+	config      config.Daemon
+	openService openflow.Service
+	logger      *log.Logger
 }
 
-func NewHandler(cfg config.Daemon, op opener.Opener, mgr MirrorManager, logger *log.Logger) http.Handler {
+func NewHandler(cfg config.Daemon, op opener.Opener, mgr openflow.MirrorManager, logger *log.Logger) http.Handler {
 	h := Handler{
 		config: cfg,
-		opener: op,
-		tunnel: mgr,
+		openService: openflow.Service{
+			Opener: op,
+			Mirror: mgr,
+		},
 		logger: newLogger(logger),
 	}
 

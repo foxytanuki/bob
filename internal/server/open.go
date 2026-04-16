@@ -1,17 +1,12 @@
 package server
 
 import (
-	"context"
 	"errors"
-	"fmt"
 	"net/http"
-	"net/url"
-	"strconv"
-	"time"
 
+	"bob/internal/openflow"
 	"bob/internal/policy"
 	"bob/internal/protocol"
-	"bob/internal/tunnel"
 )
 
 func (h Handler) handleOpen(w http.ResponseWriter, r *http.Request) {
@@ -37,26 +32,18 @@ func (h Handler) handleOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	normalized, err := policy.NormalizeAndValidate(req.URL, h.config.LocalhostOnly)
+	result, err := h.openService.Open(r.Context(), openflow.Request{
+		URL:            req.URL,
+		LocalhostOnly:  h.config.LocalhostOnly,
+		MirrorLoopback: false,
+	})
 	if err != nil {
-		h.writePolicyError(w, err, req.URL)
+		h.logger.Printf("open failed url=%s err=%v", policy.RedactForLog(req.URL), err)
+		h.writeOpenError(w, result, err)
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-
-	if err := h.opener.Open(ctx, normalized.String()); err != nil {
-		h.logger.Printf("open failed url=%s err=%v", policy.RedactForLog(normalized.String()), err)
-		writeJSON(w, http.StatusInternalServerError, protocol.OpenResponse{
-			OK:      false,
-			Status:  protocol.StatusInternalError,
-			Message: "failed to open browser",
-		})
-		return
-	}
-
-	h.logger.Printf("opened url=%s source_app=%s source_host=%s", policy.RedactForLog(normalized.String()), req.Source.App, req.Source.Host)
+	h.logger.Printf("opened url=%s source_app=%s source_host=%s", policy.RedactForLog(result.OpenedURL), req.Source.App, req.Source.Host)
 	writeJSON(w, http.StatusOK, protocol.OpenResponse{
 		OK:     true,
 		Status: protocol.StatusOpened,
@@ -80,91 +67,88 @@ func (h Handler) handleOpenV2(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, *resp)
 		return
 	}
-	normalized, err := policy.NormalizeAndValidate(req.URL, h.config.LocalhostOnly)
+	result, err := h.openService.Open(r.Context(), openflow.Request{
+		URL:            req.URL,
+		Session:        req.Session,
+		LocalhostOnly:  h.config.LocalhostOnly,
+		MirrorLoopback: true,
+	})
 	if err != nil {
-		h.writePolicyError(w, err, req.URL)
+		h.logger.Printf("open failed session=%s url=%s err=%v", req.Session, policy.RedactForLog(req.URL), err)
+		h.writeOpenError(w, result, err)
 		return
 	}
 
-	openedURL := normalized.String()
-	resp := protocol.OpenResponse{OK: true, Status: protocol.StatusOpened}
-	if policy.IsLoopbackURL(normalized) {
-		if req.Session == "" {
-			writeJSON(w, http.StatusBadRequest, protocol.OpenResponse{OK: false, Status: protocol.StatusSessionRequired, Message: "session is required for loopback URLs"})
-			return
-		}
-		if h.tunnel == nil {
-			writeJSON(w, http.StatusInternalServerError, protocol.OpenResponse{OK: false, Status: protocol.StatusMirrorFailed, Message: "auto-mirror is unavailable on this daemon"})
-			return
-		}
-		mapping, reused, err := h.tunnel.EnsureMirror(r.Context(), req.Session, portFromURL(normalized))
-		if err != nil {
-			if errors.Is(err, tunnel.ErrSessionNotFound) {
-				writeJSON(w, http.StatusNotFound, protocol.OpenResponse{OK: false, Status: protocol.StatusSessionNotFound, Message: "session not found"})
-				return
-			}
-			h.logger.Printf("mirror failed session=%s url=%s err=%v", req.Session, policy.RedactForLog(normalized.String()), err)
-			writeJSON(w, http.StatusInternalServerError, protocol.OpenResponse{OK: false, Status: protocol.StatusMirrorFailed, Message: "failed to ensure local mirror"})
-			return
-		}
-		openedURL = policy.RewriteLoopbackURL(normalized, mapping.LocalPort)
-		resp.OpenedURL = openedURL
-		resp.Rewritten = true
-		resp.LocalPort = mapping.LocalPort
-		resp.MappingReused = reused
+	resp := protocol.OpenResponse{
+		OK:            true,
+		Status:        protocol.StatusOpened,
+		Rewritten:     result.Rewritten,
+		LocalPort:     result.LocalPort,
+		MappingReused: result.MappingReused,
 	}
-
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-	if err := h.opener.Open(ctx, openedURL); err != nil {
-		h.logger.Printf("open failed url=%s err=%v", policy.RedactForLog(openedURL), err)
-		writeJSON(w, http.StatusInternalServerError, protocol.OpenResponse{OK: false, Status: protocol.StatusInternalError, Message: "failed to open browser", OpenedURL: openedURL, Rewritten: resp.Rewritten, LocalPort: resp.LocalPort, MappingReused: resp.MappingReused})
-		return
-	}
-	resp.OpenedURL = openedURL
-	if !resp.Rewritten {
-		resp.OpenedURL = ""
+	if result.Rewritten {
+		resp.OpenedURL = result.OpenedURL
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func portFromURL(parsedURL *url.URL) int {
-	if parsedURL.Port() != "" {
-		port, _ := strconv.Atoi(parsedURL.Port())
-		return port
-	}
-	if parsedURL.Scheme == "https" {
-		return 443
-	}
-	return 80
-}
-
-func (h Handler) writePolicyError(w http.ResponseWriter, err error, rawURL string) {
-	sanitized := policy.RedactForLog(rawURL)
-	if errors.Is(err, policy.ErrDeniedURL) {
-		h.logger.Printf("deny policy url=%s", sanitized)
-		writeJSON(w, http.StatusForbidden, protocol.OpenResponse{
+func (h Handler) writeOpenError(w http.ResponseWriter, result openflow.Result, err error) {
+	var flowErr *openflow.Error
+	if !errors.As(err, &flowErr) {
+		writeJSON(w, http.StatusInternalServerError, protocol.OpenResponse{
 			OK:      false,
-			Status:  protocol.StatusDenied,
-			Message: "url denied by policy",
+			Status:  protocol.StatusInternalError,
+			Message: "internal error",
 		})
 		return
 	}
 
-	if errors.Is(err, policy.ErrInvalidURL) {
-		h.logger.Printf("deny invalid url=%s", sanitized)
+	switch flowErr.Code {
+	case openflow.CodeInvalidURL:
 		writeJSON(w, http.StatusBadRequest, protocol.OpenResponse{
 			OK:      false,
 			Status:  protocol.StatusInvalidURL,
-			Message: "invalid url",
+			Message: flowErr.Message,
 		})
-		return
+	case openflow.CodeDenied:
+		writeJSON(w, http.StatusForbidden, protocol.OpenResponse{
+			OK:      false,
+			Status:  protocol.StatusDenied,
+			Message: flowErr.Message,
+		})
+	case openflow.CodeSessionRequired:
+		writeJSON(w, http.StatusBadRequest, protocol.OpenResponse{
+			OK:      false,
+			Status:  protocol.StatusSessionRequired,
+			Message: flowErr.Message,
+		})
+	case openflow.CodeSessionNotFound:
+		writeJSON(w, http.StatusNotFound, protocol.OpenResponse{
+			OK:      false,
+			Status:  protocol.StatusSessionNotFound,
+			Message: flowErr.Message,
+		})
+	case openflow.CodeMirrorFailed:
+		writeJSON(w, http.StatusInternalServerError, protocol.OpenResponse{
+			OK:      false,
+			Status:  protocol.StatusMirrorFailed,
+			Message: flowErr.Message,
+		})
+	case openflow.CodeOpenFailed:
+		writeJSON(w, http.StatusInternalServerError, protocol.OpenResponse{
+			OK:            false,
+			Status:        protocol.StatusInternalError,
+			Message:       flowErr.Message,
+			OpenedURL:     result.OpenedURL,
+			Rewritten:     result.Rewritten,
+			LocalPort:     result.LocalPort,
+			MappingReused: result.MappingReused,
+		})
+	default:
+		writeJSON(w, http.StatusInternalServerError, protocol.OpenResponse{
+			OK:      false,
+			Status:  protocol.StatusInternalError,
+			Message: "internal error",
+		})
 	}
-
-	h.logger.Printf("unexpected policy error url=%s err=%v", sanitized, err)
-	writeJSON(w, http.StatusInternalServerError, protocol.OpenResponse{
-		OK:      false,
-		Status:  protocol.StatusInternalError,
-		Message: fmt.Sprintf("policy error: %v", err),
-	})
 }
