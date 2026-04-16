@@ -2,71 +2,28 @@ package server
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"log"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
 
-	"bob/internal/auth"
-	"bob/internal/config"
-	"bob/internal/opener"
 	"bob/internal/policy"
 	"bob/internal/protocol"
 	"bob/internal/tunnel"
 )
 
-type Handler struct {
-	config config.Daemon
-	opener opener.Opener
-	tunnel *tunnel.Manager
-	logger *log.Logger
-}
-
-func NewHandler(cfg config.Daemon, op opener.Opener, mgr *tunnel.Manager, logger *log.Logger) http.Handler {
-	h := Handler{
-		config: cfg,
-		opener: op,
-		tunnel: mgr,
-		logger: logger,
-	}
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", writeHealth)
-	mux.HandleFunc("/open", h.handleOpen)
-	mux.HandleFunc("/v2/open", h.handleOpenV2)
-	return mux
-}
-
 func (h Handler) handleOpen(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
-		writeJSON(w, http.StatusMethodNotAllowed, protocol.OpenResponse{
-			OK:      false,
-			Status:  protocol.StatusInvalidRequest,
-			Message: "method not allowed",
-		})
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
-
-	if !auth.ValidateBearerToken(r.Header.Get("Authorization"), h.config.Token) {
-		h.logger.Printf("deny unauthorized request from %s", r.RemoteAddr)
-		writeJSON(w, http.StatusUnauthorized, protocol.OpenResponse{
-			OK:      false,
-			Status:  protocol.StatusUnauthorized,
-			Message: "invalid or missing bearer token",
-		})
+	if !h.authorize(w, r) {
 		return
 	}
 
 	var req protocol.OpenRequest
-	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil {
+	if err := decodeJSONBody(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, protocol.OpenResponse{
 			OK:      false,
 			Status:  protocol.StatusInvalidRequest,
@@ -75,21 +32,8 @@ func (h Handler) handleOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Action != "" && req.Action != protocol.ActionOpenURL {
-		writeJSON(w, http.StatusBadRequest, protocol.OpenResponse{
-			OK:      false,
-			Status:  protocol.StatusInvalidRequest,
-			Message: "unsupported action",
-		})
-		return
-	}
-
-	if req.Version != 0 && req.Version != protocol.OpenVersionV1 {
-		writeJSON(w, http.StatusBadRequest, protocol.OpenResponse{
-			OK:      false,
-			Status:  protocol.StatusInvalidRequest,
-			Message: "unsupported version",
-		})
+	if resp := validateOpenEnvelope(req.Version, protocol.OpenVersionV1, req.Action); resp != nil {
+		writeJSON(w, http.StatusBadRequest, *resp)
 		return
 	}
 
@@ -120,30 +64,20 @@ func (h Handler) handleOpen(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) handleOpenV2(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
-		writeJSON(w, http.StatusMethodNotAllowed, protocol.OpenResponse{OK: false, Status: protocol.StatusInvalidRequest, Message: "method not allowed"})
+	if !requireMethod(w, r, http.MethodPost) {
 		return
 	}
-	if !auth.ValidateBearerToken(r.Header.Get("Authorization"), h.config.Token) {
-		h.logger.Printf("deny unauthorized request from %s", r.RemoteAddr)
-		writeJSON(w, http.StatusUnauthorized, protocol.OpenResponse{OK: false, Status: protocol.StatusUnauthorized, Message: "invalid or missing bearer token"})
+	if !h.authorize(w, r) {
 		return
 	}
 
 	var req protocol.OpenRequestV2
-	decoder := json.NewDecoder(io.LimitReader(r.Body, 1<<20))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&req); err != nil {
+	if err := decodeJSONBody(r, &req); err != nil {
 		writeJSON(w, http.StatusBadRequest, protocol.OpenResponse{OK: false, Status: protocol.StatusInvalidRequest, Message: "invalid request body"})
 		return
 	}
-	if req.Action != "" && req.Action != protocol.ActionOpenURL {
-		writeJSON(w, http.StatusBadRequest, protocol.OpenResponse{OK: false, Status: protocol.StatusInvalidRequest, Message: "unsupported action"})
-		return
-	}
-	if req.Version != 0 && req.Version != protocol.OpenVersionV2 {
-		writeJSON(w, http.StatusBadRequest, protocol.OpenResponse{OK: false, Status: protocol.StatusInvalidRequest, Message: "unsupported version"})
+	if resp := validateOpenEnvelope(req.Version, protocol.OpenVersionV2, req.Action); resp != nil {
+		writeJSON(w, http.StatusBadRequest, *resp)
 		return
 	}
 	normalized, err := policy.NormalizeAndValidate(req.URL, h.config.LocalhostOnly)

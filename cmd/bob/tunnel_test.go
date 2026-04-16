@@ -3,10 +3,12 @@ package main
 import (
 	"reflect"
 	"testing"
+
+	"bob/internal/app/bobcli"
 )
 
 func TestSplitLeadingNameKeepsTunnelFlagsInOrder(t *testing.T) {
-	name, remaining := splitLeadingName([]string{"ws01", "--ssh", "user@remote-host", "--mirror", "8787"})
+	name, remaining := bobcli.SplitLeadingName([]string{"ws01", "--ssh", "user@remote-host", "--mirror", "8787"})
 
 	if name != "ws01" {
 		t.Fatalf("name = %q, want %q", name, "ws01")

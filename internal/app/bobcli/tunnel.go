@@ -1,4 +1,4 @@
-package main
+package bobcli
 
 import (
 	"context"
@@ -13,6 +13,17 @@ import (
 )
 
 const sshCommandTimeout = 30 * time.Second
+
+func RunTunnel(args []string, stdout, stderr io.Writer) int {
+	return runTunnel(args, stdout, stderr)
+}
+
+func SplitLeadingName(args []string) (string, []string) {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return "", args
+	}
+	return args[0], args[1:]
+}
 
 func runTunnel(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -38,7 +49,7 @@ func runTunnel(args []string, stdout, stderr io.Writer) int {
 }
 
 func runTunnelUp(args []string, stdout, stderr io.Writer) int {
-	name, remainingArgs := splitLeadingName(args)
+	name, remainingArgs := SplitLeadingName(args)
 	fs := flag.NewFlagSet("bob tunnel up", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	sshTarget := fs.String("ssh", "", "SSH target, e.g. user@remote-host")
@@ -213,26 +224,6 @@ func runTunnelDown(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "Tunnel %s was already stale; local state removed.\n", result.State.Name)
 	}
 	return 0
-}
-
-func printTunnelUsage(w io.Writer) {
-	_, _ = io.WriteString(w, `Usage:
-  bob tunnel up <name> --ssh <target> [--mirror <port>]...
-  bob tunnel status [<name>|--all]
-  bob tunnel down <name>
-
-Examples:
-  bob tunnel up devbox --ssh user@remote-host --mirror 8787
-  bob tunnel status devbox
-  bob tunnel down devbox
-`)
-}
-
-func splitLeadingName(args []string) (string, []string) {
-	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
-		return "", args
-	}
-	return args[0], args[1:]
 }
 
 func printTunnelDetails(w io.Writer, status tunnel.StatusInfo) {

@@ -1,7 +1,7 @@
 go := env_var_or_default("GO", "go")
 prefix := env_var_or_default("PREFIX", home_directory() + "/.local")
 bindir := env_var_or_default("BINDIR", prefix + "/bin")
-version := env_var_or_default("VERSION", "dev")
+version := env_var_or_default("VERSION", "v0.2.0")
 commit := env_var_or_default("COMMIT", "")
 date := env_var_or_default("DATE", "")
 

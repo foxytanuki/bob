@@ -5,31 +5,32 @@ import (
 	"strings"
 	"testing"
 
+	"bob/internal/app/bobdapp"
 	"bob/internal/tunnel"
 	"bob/internal/version"
 )
 
 func TestParseServeOptionsTunnelFlags(t *testing.T) {
 	var stderr bytes.Buffer
-	opts, err := parseServeOptions([]string{"--tunnel-name", "devbox", "--ssh", "user@remote-host", "--remote-bob-port", "19432", "--local-bobd", "127.0.0.1:7331"}, &stderr)
+	opts, err := bobdapp.ParseServeOptions([]string{"--tunnel-name", "devbox", "--ssh", "user@remote-host", "--remote-bob-port", "19432", "--local-bobd", "127.0.0.1:7331"}, &stderr)
 	if err != nil {
-		t.Fatalf("parseServeOptions returned error: %v", err)
+		t.Fatalf("ParseServeOptions returned error: %v", err)
 	}
 
-	if !opts.tunnelEnabled() {
-		t.Fatal("tunnelEnabled = false, want true")
+	if !opts.TunnelEnabled() {
+		t.Fatal("TunnelEnabled = false, want true")
 	}
-	if opts.tunnelName != "devbox" {
-		t.Fatalf("tunnelName = %q, want %q", opts.tunnelName, "devbox")
+	if opts.TunnelName != "devbox" {
+		t.Fatalf("TunnelName = %q, want %q", opts.TunnelName, "devbox")
 	}
-	if opts.sshTarget != "user@remote-host" {
-		t.Fatalf("sshTarget = %q, want %q", opts.sshTarget, "user@remote-host")
+	if opts.SSHTarget != "user@remote-host" {
+		t.Fatalf("SSHTarget = %q, want %q", opts.SSHTarget, "user@remote-host")
 	}
-	if opts.remoteBobPort != 19432 {
-		t.Fatalf("remoteBobPort = %d, want 19432", opts.remoteBobPort)
+	if opts.RemoteBobPort != 19432 {
+		t.Fatalf("RemoteBobPort = %d, want 19432", opts.RemoteBobPort)
 	}
-	if opts.localBobdAddr != "127.0.0.1:7331" {
-		t.Fatalf("localBobdAddr = %q, want %q", opts.localBobdAddr, "127.0.0.1:7331")
+	if opts.LocalBobdAddr != "127.0.0.1:7331" {
+		t.Fatalf("LocalBobdAddr = %q, want %q", opts.LocalBobdAddr, "127.0.0.1:7331")
 	}
 }
 
@@ -42,9 +43,9 @@ func TestParseServeOptionsRejectsPartialTunnelFlags(t *testing.T) {
 	for _, args := range tests {
 		t.Run(args[0], func(t *testing.T) {
 			var stderr bytes.Buffer
-			_, err := parseServeOptions(args, &stderr)
+			_, err := bobdapp.ParseServeOptions(args, &stderr)
 			if err == nil {
-				t.Fatal("parseServeOptions returned nil error, want failure")
+				t.Fatal("ParseServeOptions returned nil error, want failure")
 			}
 		})
 	}
@@ -52,29 +53,29 @@ func TestParseServeOptionsRejectsPartialTunnelFlags(t *testing.T) {
 
 func TestParseServeOptionsDefaultsRemotePort(t *testing.T) {
 	var stderr bytes.Buffer
-	opts, err := parseServeOptions(nil, &stderr)
+	opts, err := bobdapp.ParseServeOptions(nil, &stderr)
 	if err != nil {
-		t.Fatalf("parseServeOptions returned error: %v", err)
+		t.Fatalf("ParseServeOptions returned error: %v", err)
 	}
-	if opts.remoteBobPort != tunnel.DefaultRemoteBobPort {
-		t.Fatalf("remoteBobPort = %d, want %d", opts.remoteBobPort, tunnel.DefaultRemoteBobPort)
+	if opts.RemoteBobPort != tunnel.DefaultRemoteBobPort {
+		t.Fatalf("RemoteBobPort = %d, want %d", opts.RemoteBobPort, tunnel.DefaultRemoteBobPort)
 	}
 }
 
 func TestParseServeOptionsRejectsPositionalArgs(t *testing.T) {
 	var stderr bytes.Buffer
-	_, err := parseServeOptions([]string{"unexpected"}, &stderr)
+	_, err := bobdapp.ParseServeOptions([]string{"unexpected"}, &stderr)
 	if err == nil {
-		t.Fatal("parseServeOptions returned nil error, want failure")
+		t.Fatal("ParseServeOptions returned nil error, want failure")
 	}
 }
 
 func TestServeOptionsLocalBobdAddrOr(t *testing.T) {
-	if got := (serveOptions{}).localBobdAddrOr("127.0.0.1:7331"); got != "127.0.0.1:7331" {
-		t.Fatalf("localBobdAddrOr fallback = %q, want %q", got, "127.0.0.1:7331")
+	if got := (bobdapp.ServeOptions{}).LocalBobdAddrOr("127.0.0.1:7331"); got != "127.0.0.1:7331" {
+		t.Fatalf("LocalBobdAddrOr fallback = %q, want %q", got, "127.0.0.1:7331")
 	}
-	if got := (serveOptions{localBobdAddr: "127.0.0.1:19432"}).localBobdAddrOr("127.0.0.1:7331"); got != "127.0.0.1:19432" {
-		t.Fatalf("localBobdAddrOr explicit = %q, want %q", got, "127.0.0.1:19432")
+	if got := (bobdapp.ServeOptions{LocalBobdAddr: "127.0.0.1:19432"}).LocalBobdAddrOr("127.0.0.1:7331"); got != "127.0.0.1:19432" {
+		t.Fatalf("LocalBobdAddrOr explicit = %q, want %q", got, "127.0.0.1:19432")
 	}
 }
 
@@ -91,7 +92,7 @@ func TestRunVersionCommandPrintsDefaultVersion(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var stdout bytes.Buffer
 			var stderr bytes.Buffer
-			exitCode := run(tt.args, &stdout, &stderr)
+			exitCode := bobdapp.Run(tt.args, &stdout, &stderr)
 
 			if exitCode != 0 {
 				t.Fatalf("exitCode = %d, want 0", exitCode)
@@ -99,8 +100,9 @@ func TestRunVersionCommandPrintsDefaultVersion(t *testing.T) {
 			if stderr.Len() != 0 {
 				t.Fatalf("stderr = %q, want empty", stderr.String())
 			}
-			if got := stdout.String(); !strings.Contains(got, "bobd dev") {
-				t.Fatalf("stdout = %q, want bobd dev", got)
+			want := "bobd " + version.Version
+			if got := stdout.String(); !strings.Contains(got, want) {
+				t.Fatalf("stdout = %q, want %q", got, want)
 			}
 		})
 	}
@@ -117,13 +119,13 @@ func TestRunVersionCommandIncludesCommitAndDate(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	exitCode := run([]string{"--version"}, &stdout, &stderr)
+	exitCode := bobdapp.Run([]string{"--version"}, &stdout, &stderr)
 
 	if exitCode != 0 {
 		t.Fatalf("exitCode = %d, want 0", exitCode)
 	}
 	got := stdout.String()
-	for _, want := range []string{"bobd dev", "commit: abc123", "built: 2026-03-31"} {
+	for _, want := range []string{"bobd " + version.Version, "commit: abc123", "built: 2026-03-31"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stdout = %q, want %q", got, want)
 		}
@@ -133,7 +135,7 @@ func TestRunVersionCommandIncludesCommitAndDate(t *testing.T) {
 func TestRunVersionCommandRejectsExtraArgs(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	exitCode := run([]string{"--version", "extra"}, &stdout, &stderr)
+	exitCode := bobdapp.Run([]string{"--version", "extra"}, &stdout, &stderr)
 
 	if exitCode != 1 {
 		t.Fatalf("exitCode = %d, want 1", exitCode)

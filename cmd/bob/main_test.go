@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"bob/internal/app/bobcli"
 	"bob/internal/version"
 )
 
@@ -13,7 +14,7 @@ func TestRunTreatsBareURLAsOpen(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	exitCode := run([]string{"http://127.0.0.1:8787"}, &stdout, &stderr)
+	exitCode := bobcli.Run([]string{"http://127.0.0.1:8787"}, &stdout, &stderr)
 
 	if exitCode != 1 {
 		t.Fatalf("exitCode = %d, want 1", exitCode)
@@ -26,7 +27,7 @@ func TestRunTreatsBareURLAsOpen(t *testing.T) {
 func TestRunKeepsUnknownCommandsAsErrors(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	exitCode := run([]string{"not-a-command"}, &stdout, &stderr)
+	exitCode := bobcli.Run([]string{"not-a-command"}, &stdout, &stderr)
 
 	if exitCode != 1 {
 		t.Fatalf("exitCode = %d, want 1", exitCode)
@@ -50,7 +51,7 @@ func TestRunVersionCommandPrintsDefaultVersion(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var stdout bytes.Buffer
 			var stderr bytes.Buffer
-			exitCode := run(tt.args, &stdout, &stderr)
+			exitCode := bobcli.Run(tt.args, &stdout, &stderr)
 
 			if exitCode != 0 {
 				t.Fatalf("exitCode = %d, want 0", exitCode)
@@ -58,8 +59,9 @@ func TestRunVersionCommandPrintsDefaultVersion(t *testing.T) {
 			if stderr.Len() != 0 {
 				t.Fatalf("stderr = %q, want empty", stderr.String())
 			}
-			if got := stdout.String(); !strings.Contains(got, "bob dev") {
-				t.Fatalf("stdout = %q, want bob dev", got)
+			want := "bob " + version.Version
+			if got := stdout.String(); !strings.Contains(got, want) {
+				t.Fatalf("stdout = %q, want %q", got, want)
 			}
 		})
 	}
@@ -76,13 +78,13 @@ func TestRunVersionCommandIncludesCommitAndDate(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	exitCode := run([]string{"version"}, &stdout, &stderr)
+	exitCode := bobcli.Run([]string{"version"}, &stdout, &stderr)
 
 	if exitCode != 0 {
 		t.Fatalf("exitCode = %d, want 0", exitCode)
 	}
 	got := stdout.String()
-	for _, want := range []string{"bob dev", "commit: abc123", "built: 2026-03-31"} {
+	for _, want := range []string{"bob " + version.Version, "commit: abc123", "built: 2026-03-31"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("stdout = %q, want %q", got, want)
 		}
@@ -92,7 +94,7 @@ func TestRunVersionCommandIncludesCommitAndDate(t *testing.T) {
 func TestRunVersionCommandRejectsExtraArgs(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	exitCode := run([]string{"version", "extra"}, &stdout, &stderr)
+	exitCode := bobcli.Run([]string{"version", "extra"}, &stdout, &stderr)
 
 	if exitCode != 1 {
 		t.Fatalf("exitCode = %d, want 1", exitCode)

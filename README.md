@@ -45,7 +45,7 @@ Current limitations:
 
 ## Build
 
-Build with the default development version:
+Build with the default version:
 
 ```bash
 just build
@@ -54,7 +54,7 @@ just build
 Build with an explicit version:
 
 ```bash
-VERSION=v0.1.0 just build
+VERSION=v0.2.0 just build
 ```
 
 Install to `~/.local/bin`:
@@ -86,19 +86,19 @@ bobd version
 
 - Git tags use the `vX.Y.Z` format.
 - Application versions follow SemVer.
-- Development builds default to `dev`.
+- Repository builds default to `v0.2.0`.
 
 Example release build:
 
 ```bash
-VERSION=v0.1.0 just build-binaries
-git tag v0.1.0
+VERSION=v0.2.0 just build-binaries
+git tag v0.2.0
 ```
 
 Include commit and build date if needed:
 
 ```bash
-VERSION=v0.1.0 COMMIT=$(git rev-parse --short HEAD) DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) just build-binaries
+VERSION=v0.2.0 COMMIT=$(git rev-parse --short HEAD) DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) just build-binaries
 ```
 
 ## Quick start
