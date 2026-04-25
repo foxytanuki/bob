@@ -54,7 +54,7 @@ just build
 Build with an explicit version:
 
 ```bash
-VERSION=v0.3.0 just build
+VERSION=v0.4.0 just build
 ```
 
 Install to `~/.local/bin`:
@@ -86,19 +86,19 @@ bobd version
 
 - Git tags use the `vX.Y.Z` format.
 - Application versions follow SemVer.
-- Repository builds default to `v0.3.0`.
+- Repository builds default to `v0.4.0`.
 
 Example release build:
 
 ```bash
-VERSION=v0.3.0 just build-binaries
-git tag v0.3.0
+VERSION=v0.4.0 just build-binaries
+git tag v0.4.0
 ```
 
 Include commit and build date if needed:
 
 ```bash
-VERSION=v0.3.0 COMMIT=$(git rev-parse --short HEAD) DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) just build-binaries
+VERSION=v0.4.0 COMMIT=$(git rev-parse --short HEAD) DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) just build-binaries
 ```
 
 ## Quick start
