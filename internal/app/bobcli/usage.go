@@ -9,6 +9,7 @@ Usage:
   bob <url>
   bob init --token <token> --session <name> [--endpoint <url>] [--timeout 5s] [--force]
   bob open <url>
+  bob code-server [--port <port>] [path]
   bob doctor
   bob version
   bob tunnel <subcommand>
@@ -18,6 +19,7 @@ Environment:
   BOB_TOKEN     Bearer token shared with bobd
   BOB_SESSION   Tunnel/session name used for auto-mirror
   BOB_TIMEOUT   Request timeout (default: 5s)
+  BOB_CODE_SERVER_PORT  code-server port (default: 8080)
 `)
 }
 

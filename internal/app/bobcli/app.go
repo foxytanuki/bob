@@ -22,6 +22,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runInit(args[1:], stdout, stderr)
 	case "open":
 		return runOpen(args[1:], stderr)
+	case "code-server":
+		return runCodeServer(args[1:], stderr)
 	case "doctor":
 		return runDoctor(stdout, stderr)
 	case "version", "--version", "-v":

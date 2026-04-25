@@ -31,7 +31,9 @@ remote bob sends POST http://127.0.0.1:17331/open
 This repository now contains a minimal Go MVP scaffold:
 
 - `bob <url>`
+- `bob init`
 - `bob open <url>`
+- `bob code-server [path]`
 - `bob doctor`
 - `bob tunnel up/status/down`
 - `bobd serve`
@@ -54,7 +56,7 @@ just build
 Build with an explicit version:
 
 ```bash
-VERSION=v0.4.0 just build
+VERSION=v0.5.0 just build
 ```
 
 Install to `~/.local/bin`:
@@ -86,22 +88,28 @@ bobd version
 
 - Git tags use the `vX.Y.Z` format.
 - Application versions follow SemVer.
-- Repository builds default to `v0.4.0`.
+- Repository builds default to `v0.5.0`.
 
 Example release build:
 
 ```bash
-VERSION=v0.4.0 just build-binaries
-git tag v0.4.0
+VERSION=v0.5.0 just build-binaries
+git tag v0.5.0
 ```
 
 Include commit and build date if needed:
 
 ```bash
-VERSION=v0.4.0 COMMIT=$(git rev-parse --short HEAD) DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) just build-binaries
+VERSION=v0.5.0 COMMIT=$(git rev-parse --short HEAD) DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) just build-binaries
 ```
 
 ## Quick start
+
+The common setup is:
+
+- local machine: run `bobd` and open the browser
+- remote machine: run `bob` from dev tools / shells
+- SSH reverse forwarding makes remote `127.0.0.1:17331` reach local `bobd`
 
 1. Generate a shared token and local daemon config:
 
@@ -146,6 +154,19 @@ bob doctor
 bob open http://127.0.0.1:5173
 ```
 
+### Open code-server
+
+`bob code-server [path]` opens an already-running remote code-server instance in your local browser through the existing loopback mirror flow. It does not start code-server.
+
+Run code-server on the remote machine bound to loopback, for example `127.0.0.1:8080`, then run:
+
+```bash
+bob code-server .
+bob code-server ~/repo --port 65508
+```
+
+The command resolves the folder to an absolute path, builds `http://127.0.0.1:<port>/?folder=<path>`, and sends it through the normal `bob open` `/v2/open` flow. Because the URL is loopback, `session` / `BOB_SESSION` must match an active tunnel session so `bobd` can mirror the remote port locally.
+
 If `~/.config/bob/bob.json` already exists, `bob init` refuses to overwrite it. To intentionally update it, delete the config file first or run `bob init --force --token <shared-token> --session <name> ...`.
 
 If `~/.config/bob/bobd.json` already exists, `bobd init` refuses to overwrite it to avoid accidentally rotating the token and breaking remote machines. To intentionally regenerate the token, delete the config file first or run:
@@ -171,6 +192,7 @@ bob tunnel up devbox --ssh user@remote-host
 Important:
 
 - `BOB_ENDPOINT` only points to `bobd`.
+- `session` / `BOB_SESSION` should match the tunnel name, e.g. `devbox`.
 - Loopback app URLs can be mirrored automatically after the control tunnel exists.
 - If the same local port is busy, `bobd` may allocate another local port and rewrite the opened URL.
 
@@ -179,6 +201,13 @@ If automatic opening fails, `bob open` prints the URL so the user can open it ma
 ## Configuration
 
 `bob` and `bobd` read JSON config files from `$XDG_CONFIG_HOME/bob/`, falling back to `~/.config/bob/`.
+
+Environment variables override config file values, which is useful for temporary overrides, CI, and containers.
+
+### What endpoint and session mean
+
+- `endpoint`: the remote-visible URL for the local daemon. With the default SSH tunnel this is `http://127.0.0.1:17331` on the remote machine.
+- `session`: the tunnel name used to mirror remote loopback URLs back to the local browser. For remote-hosted dev servers, set this during init with `bob init --session <name>`.
 
 ### Remote CLI config
 
@@ -189,7 +218,10 @@ If automatic opening fails, `bob open` prints the URL so the user can open it ma
   "endpoint": "http://127.0.0.1:17331",
   "token": "<shared-token>",
   "session": "devbox",
-  "timeout": "5s"
+  "timeout": "5s",
+  "codeServer": {
+    "port": 8080
+  }
 }
 ```
 
@@ -205,8 +237,6 @@ If automatic opening fails, `bob open` prints the URL so the user can open it ma
 }
 ```
 
-Environment variables override config file values, which is useful for temporary overrides, CI, and containers.
-
 ## Environment overrides
 
 ### Remote CLI
@@ -215,6 +245,7 @@ Environment variables override config file values, which is useful for temporary
 - `BOB_TOKEN` overrides `token`
 - `BOB_SESSION` overrides `session`; required for auto-mirror, set to the tunnel name
 - `BOB_TIMEOUT` overrides `timeout` (default: `5s`)
+- `BOB_CODE_SERVER_PORT` overrides `codeServer.port` for `bob code-server` (default: `8080`)
 
 ### Local daemon
 

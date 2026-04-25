@@ -16,6 +16,7 @@ func TestLoadCLI(t *testing.T) {
 		t.Setenv("BOB_TOKEN", "")
 		t.Setenv("BOB_SESSION", "")
 		t.Setenv("BOB_TIMEOUT", "")
+		t.Setenv("BOB_CODE_SERVER_PORT", "")
 
 		path := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "bob", cliConfigFilename)
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -26,6 +27,9 @@ func TestLoadCLI(t *testing.T) {
 			Token:    "cli-token",
 			Session:  "demo-session",
 			Timeout:  "10s",
+			CodeServer: cliCodeServerConfig{
+				Port: intPtr(65508),
+			},
 		}
 		data, err := json.MarshalIndent(cfg, "", "  ")
 		if err != nil {
@@ -51,6 +55,9 @@ func TestLoadCLI(t *testing.T) {
 		if got.Timeout != 10*time.Second {
 			t.Fatalf("Timeout = %v, want %v", got.Timeout, 10*time.Second)
 		}
+		if got.CodeServer.Port != 65508 {
+			t.Fatalf("CodeServer.Port = %d, want %d", got.CodeServer.Port, 65508)
+		}
 	})
 
 	t.Run("missing file defaults", func(t *testing.T) {
@@ -59,6 +66,7 @@ func TestLoadCLI(t *testing.T) {
 		t.Setenv("BOB_TOKEN", "")
 		t.Setenv("BOB_SESSION", "")
 		t.Setenv("BOB_TIMEOUT", "")
+		t.Setenv("BOB_CODE_SERVER_PORT", "")
 
 		got, err := LoadCLI()
 		if err != nil {
@@ -73,6 +81,9 @@ func TestLoadCLI(t *testing.T) {
 		if got.Timeout != 5*time.Second {
 			t.Fatalf("Timeout = %v, want %v", got.Timeout, 5*time.Second)
 		}
+		if got.CodeServer.Port != DefaultCodeServerPort {
+			t.Fatalf("CodeServer.Port = %d, want %d", got.CodeServer.Port, DefaultCodeServerPort)
+		}
 	})
 
 	t.Run("env override", func(t *testing.T) {
@@ -81,6 +92,7 @@ func TestLoadCLI(t *testing.T) {
 		t.Setenv("BOB_TOKEN", "env-token")
 		t.Setenv("BOB_SESSION", "env-session")
 		t.Setenv("BOB_TIMEOUT", "3s")
+		t.Setenv("BOB_CODE_SERVER_PORT", "")
 
 		path := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "bob", cliConfigFilename)
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -106,6 +118,9 @@ func TestLoadCLI(t *testing.T) {
 		if got.Timeout != 3*time.Second {
 			t.Fatalf("Timeout = %v, want env override", got.Timeout)
 		}
+		if got.CodeServer.Port != DefaultCodeServerPort {
+			t.Fatalf("CodeServer.Port = %d, want default", got.CodeServer.Port)
+		}
 	})
 
 	t.Run("invalid JSON", func(t *testing.T) {
@@ -114,6 +129,7 @@ func TestLoadCLI(t *testing.T) {
 		t.Setenv("BOB_TOKEN", "")
 		t.Setenv("BOB_SESSION", "")
 		t.Setenv("BOB_TIMEOUT", "")
+		t.Setenv("BOB_CODE_SERVER_PORT", "")
 
 		path := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "bob", cliConfigFilename)
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -134,6 +150,7 @@ func TestLoadCLI(t *testing.T) {
 		t.Setenv("BOB_TOKEN", "")
 		t.Setenv("BOB_SESSION", "")
 		t.Setenv("BOB_TIMEOUT", "")
+		t.Setenv("BOB_CODE_SERVER_PORT", "")
 
 		path := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "bob", cliConfigFilename)
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -151,4 +168,33 @@ func TestLoadCLI(t *testing.T) {
 			t.Fatalf("error = %q, want config-file duration parse message", err)
 		}
 	})
+
+	t.Run("loads code-server port for command-specific validation", func(t *testing.T) {
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		t.Setenv("BOB_ENDPOINT", "")
+		t.Setenv("BOB_TOKEN", "")
+		t.Setenv("BOB_SESSION", "")
+		t.Setenv("BOB_TIMEOUT", "")
+		t.Setenv("BOB_CODE_SERVER_PORT", "")
+
+		path := filepath.Join(os.Getenv("XDG_CONFIG_HOME"), "bob", cliConfigFilename)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("{\"codeServer\":{\"port\":0}}\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := LoadCLI()
+		if err != nil {
+			t.Fatalf("LoadCLI() error = %v", err)
+		}
+		if got.CodeServer.Port != 0 {
+			t.Fatalf("CodeServer.Port = %d, want raw invalid value for command-specific validation", got.CodeServer.Port)
+		}
+	})
+}
+
+func intPtr(value int) *int {
+	return &value
 }

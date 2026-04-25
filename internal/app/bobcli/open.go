@@ -16,7 +16,14 @@ func runOpen(args []string, stderr io.Writer) int {
 		return 1
 	}
 
-	rawURL := args[0]
+	return openURL(args[0], stderr)
+}
+
+func openURL(rawURL string, stderr io.Writer) int {
+	return openURLWithFailureStatuses(rawURL, stderr, nil)
+}
+
+func openURLWithFailureStatuses(rawURL string, stderr io.Writer, failureStatuses map[string]bool) int {
 	cfg, err := config.LoadCLI()
 	if err != nil {
 		fmt.Fprintf(stderr, "config error: %v\n", err)
@@ -67,6 +74,9 @@ func runOpen(args []string, stderr io.Writer) int {
 	}
 
 	if err == nil && resp != nil {
+		if failureStatuses[resp.Status] {
+			return 1
+		}
 		switch resp.Status {
 		case "UNAUTHORIZED", "INVALID_URL", "INVALID_REQUEST", "DENIED", "INTERNAL_ERROR":
 			return 1
