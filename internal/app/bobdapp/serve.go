@@ -94,6 +94,8 @@ func runServe(args []string, stderr io.Writer) int {
 	}
 
 	startedTunnel := false
+	var supervisorCancel context.CancelFunc
+	var supervisorDone <-chan struct{}
 	if opts.TunnelEnabled() {
 		if mgr == nil {
 			fmt.Fprintln(stderr, "tunnel error: ssh is unavailable")
@@ -115,10 +117,38 @@ func runServe(args []string, stderr io.Writer) int {
 		startedTunnel = true
 		logger.Printf("started tunnel session=%s ssh=%s endpoint=http://127.0.0.1:%d", opts.TunnelName, opts.SSHTarget, opts.RemoteBobPort)
 		logger.Printf("remote setup: export BOB_ENDPOINT=http://127.0.0.1:%d BOB_SESSION=%s", opts.RemoteBobPort, opts.TunnelName)
+
+		supervisorCtx, cancel := context.WithCancel(context.Background())
+		supervisorCancel = cancel
+		done := make(chan struct{})
+		supervisorDone = done
+		go func() {
+			defer close(done)
+			if err := mgr.Supervise(supervisorCtx, tunnel.SupervisorOptions{
+				Name:           opts.TunnelName,
+				SSHTarget:      opts.SSHTarget,
+				RemoteBobPort:  opts.RemoteBobPort,
+				LocalBobdAddr:  opts.LocalBobdAddrOr(cfg.Bind),
+				CommandTimeout: sshCommandTimeout,
+				Logf:           logger.Printf,
+			}); err != nil {
+				logger.Printf("tunnel supervisor stopped: %v", err)
+			}
+		}()
 	}
 	defer func() {
 		if !startedTunnel || mgr == nil {
 			return
+		}
+		if supervisorCancel != nil {
+			supervisorCancel()
+		}
+		if supervisorDone != nil {
+			select {
+			case <-supervisorDone:
+			case <-time.After(5 * time.Second):
+				logger.Printf("warning: tunnel supervisor did not stop within timeout")
+			}
 		}
 		downCtx, cancel := context.WithTimeout(context.Background(), sshCommandTimeout)
 		defer cancel()

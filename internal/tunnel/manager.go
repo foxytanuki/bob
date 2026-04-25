@@ -48,7 +48,7 @@ func (m *Manager) Up(ctx context.Context, opts UpOptions) (State, error) {
 		return State{}, err
 	}
 	defer fl.Unlock()
-	gfl, err := m.globalFileLock(true)
+	gfl, err := m.globalFileLockContext(ctx, true)
 	if err != nil {
 		return State{}, err
 	}
@@ -145,10 +145,12 @@ func (m *Manager) StatusAll(ctx context.Context) ([]StatusInfo, error) {
 }
 
 func (m *Manager) Down(ctx context.Context, name string) (DownResult, error) {
-	lock := m.sessionLock(name)
-	lock.Lock()
-	defer lock.Unlock()
-	fl, err := m.sessionFileLock(name, true)
+	unlock, err := m.lockSessionContext(ctx, name)
+	if err != nil {
+		return DownResult{}, err
+	}
+	defer unlock()
+	fl, err := m.sessionFileLockContext(ctx, name, true)
 	if err != nil {
 		return DownResult{}, err
 	}

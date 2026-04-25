@@ -8,6 +8,8 @@ import (
 	"bob/internal/sshwrap"
 )
 
+const recoverCommandTimeout = 30 * time.Second
+
 func (m *Manager) EnsureMirror(ctx context.Context, session string, remotePort int) (Mapping, bool, error) {
 	if err := ValidateName(session); err != nil {
 		return Mapping{}, false, err
@@ -81,7 +83,7 @@ func (m *Manager) EnsureMirror(ctx context.Context, session string, remotePort i
 		state.Mappings = append(state.Mappings, mapping)
 		state.Mappings = normalizeMappings(state.Mappings)
 		if err := writeState(m.statePath(session), state); err != nil {
-			cleanupErr := m.runner.CancelLocal(ctx, spec)
+			cleanupErr := m.cancelLocalWithTimeout(spec, recoverCommandTimeout)
 			if cleanupErr != nil {
 				return Mapping{}, false, fmt.Errorf("%w; cleanup also failed: %v", err, cleanupErr)
 			}
@@ -97,6 +99,10 @@ func (m *Manager) EnsureMirror(ctx context.Context, session string, remotePort i
 }
 
 func (m *Manager) recoverSession(ctx context.Context, state State) (State, error) {
+	return m.recoverSessionWithTimeout(ctx, state, recoverCommandTimeout)
+}
+
+func (m *Manager) recoverSessionWithTimeout(ctx context.Context, state State, commandTimeout time.Duration) (State, error) {
 	if err := m.removeSocket(state.ControlSocket); err != nil {
 		return State{}, err
 	}
@@ -106,46 +112,71 @@ func (m *Manager) recoverSession(ctx context.Context, state State) (State, error
 	if state.LocalBobdAddr == "" {
 		state.LocalBobdAddr = DefaultLocalBobdAddr
 	}
-	ctxUp, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 	mirrorPorts := make([]int, 0, len(state.Mappings))
 	for _, mapping := range state.Mappings {
 		if mapping.LocalPort == mapping.RemotePort {
 			mirrorPorts = append(mirrorPorts, mapping.RemotePort)
 		}
 	}
-	if err := m.runner.Up(ctxUp, sshwrap.UpSpec{
-		Target:        state.SSHTarget,
-		ControlSocket: state.ControlSocket,
-		RemoteBobPort: state.RemoteBobPort,
-		LocalBobdAddr: state.LocalBobdAddr,
-		MirrorPorts:   mirrorPorts,
+	if commandTimeout <= 0 {
+		commandTimeout = recoverCommandTimeout
+	}
+	if err := m.runWithTimeout(ctx, commandTimeout, func(cmdCtx context.Context) error {
+		return m.runner.Up(cmdCtx, sshwrap.UpSpec{
+			Target:        state.SSHTarget,
+			ControlSocket: state.ControlSocket,
+			RemoteBobPort: state.RemoteBobPort,
+			LocalBobdAddr: state.LocalBobdAddr,
+			MirrorPorts:   mirrorPorts,
+		})
 	}); err != nil {
+		_ = m.rollbackRecoveredSession(state, commandTimeout)
 		return State{}, err
 	}
 	for _, mapping := range state.Mappings {
 		if mapping.LocalPort == mapping.RemotePort {
 			continue
 		}
-		if err := m.runner.ForwardLocal(ctxUp, sshwrap.ForwardSpec{
+		spec := sshwrap.ForwardSpec{
 			Target:        state.SSHTarget,
 			ControlSocket: state.ControlSocket,
 			LocalPort:     mapping.LocalPort,
 			RemotePort:    mapping.RemotePort,
+		}
+		if err := m.runWithTimeout(ctx, commandTimeout, func(cmdCtx context.Context) error {
+			return m.runner.ForwardLocal(cmdCtx, spec)
 		}); err != nil {
-			if downErr := m.runner.Down(ctxUp, sshwrap.ControlSpec{Target: state.SSHTarget, ControlSocket: state.ControlSocket}); downErr != nil {
+			if downErr := m.rollbackRecoveredSession(state, commandTimeout); downErr != nil {
 				return State{}, fmt.Errorf("%w; rollback failed: %v", err, downErr)
 			}
 			return State{}, err
 		}
 	}
 	if err := writeState(m.statePath(state.Name), state); err != nil {
-		if downErr := m.runner.Down(ctxUp, sshwrap.ControlSpec{Target: state.SSHTarget, ControlSocket: state.ControlSocket}); downErr != nil {
+		if downErr := m.rollbackRecoveredSession(state, commandTimeout); downErr != nil {
 			return State{}, fmt.Errorf("%w; rollback failed: %v", err, downErr)
 		}
 		return State{}, err
 	}
 	return state, nil
+}
+
+func (m *Manager) runWithTimeout(ctx context.Context, timeout time.Duration, run func(context.Context) error) error {
+	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	return run(cmdCtx)
+}
+
+func (m *Manager) rollbackRecoveredSession(state State, timeout time.Duration) error {
+	rollbackCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return m.runner.Down(rollbackCtx, sshwrap.ControlSpec{Target: state.SSHTarget, ControlSocket: state.ControlSocket})
+}
+
+func (m *Manager) cancelLocalWithTimeout(spec sshwrap.ForwardSpec, timeout time.Duration) error {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return m.runner.CancelLocal(cleanupCtx, spec)
 }
 
 func (m *Manager) check(ctx context.Context, state State) StatusInfo {
