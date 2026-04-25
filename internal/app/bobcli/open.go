@@ -16,7 +16,14 @@ func runOpen(args []string, stderr io.Writer) int {
 		return 1
 	}
 
-	return openURL(args[0], stderr)
+	return openURL(normalizeOpenTarget(args[0]), stderr)
+}
+
+func normalizeOpenTarget(value string) string {
+	if looksLikePort(value) {
+		return "http://localhost:" + value + "/"
+	}
+	return value
 }
 
 func openURL(rawURL string, stderr io.Writer) int {

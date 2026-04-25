@@ -3,6 +3,7 @@ package bobcli
 import (
 	"fmt"
 	"io"
+	"strconv"
 
 	"bob/internal/cliutil"
 	"bob/internal/policy"
@@ -13,7 +14,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		printUsage(stderr)
 		return 1
 	}
-	if len(args) == 1 && looksLikeURL(args[0]) {
+	if len(args) == 1 && looksLikeOpenTarget(args[0]) {
 		return runOpen(args, stderr)
 	}
 
@@ -40,7 +41,16 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+func looksLikeOpenTarget(value string) bool {
+	return looksLikeURL(value) || looksLikePort(value)
+}
+
 func looksLikeURL(value string) bool {
 	parsed, err := policy.NormalizeAndValidate(value, false)
 	return err == nil && parsed != nil
+}
+
+func looksLikePort(value string) bool {
+	port, err := strconv.Atoi(value)
+	return err == nil && port > 0 && port <= 65535
 }

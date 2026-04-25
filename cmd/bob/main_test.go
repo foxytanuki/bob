@@ -28,6 +28,38 @@ func TestRunTreatsBareURLAsOpen(t *testing.T) {
 	}
 }
 
+func TestRunTreatsBarePortAsLocalhostOpen(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("BOB_SESSION", "")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := bobcli.Run([]string{"5173"}, &stdout, &stderr)
+
+	if exitCode != 1 {
+		t.Fatalf("exitCode = %d, want 1", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "BOB_SESSION is required") {
+		t.Fatalf("stderr = %q, want session guidance", stderr.String())
+	}
+}
+
+func TestRunOpenTreatsPortAsLocalhostURL(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("BOB_SESSION", "")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := bobcli.Run([]string{"open", "5173"}, &stdout, &stderr)
+
+	if exitCode != 1 {
+		t.Fatalf("exitCode = %d, want 1", exitCode)
+	}
+	if !strings.Contains(stderr.String(), "BOB_SESSION is required") {
+		t.Fatalf("stderr = %q, want session guidance", stderr.String())
+	}
+}
+
 func TestRunKeepsUnknownCommandsAsErrors(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	var stdout bytes.Buffer
