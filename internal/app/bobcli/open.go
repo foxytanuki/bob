@@ -17,7 +17,11 @@ func runOpen(args []string, stderr io.Writer) int {
 	}
 
 	rawURL := args[0]
-	cfg := config.LoadCLIFromEnv()
+	cfg, err := config.LoadCLI()
+	if err != nil {
+		fmt.Fprintf(stderr, "config error: %v\n", err)
+		return 1
+	}
 	requiresSession := false
 	if parsed, err := policy.NormalizeAndValidate(rawURL, false); err == nil {
 		requiresSession = policy.IsLoopbackURL(parsed)
@@ -73,7 +77,11 @@ func runOpen(args []string, stderr io.Writer) int {
 }
 
 func runDoctor(stdout, stderr io.Writer) int {
-	cfg := config.LoadCLIFromEnv()
+	cfg, err := config.LoadCLI()
+	if err != nil {
+		fmt.Fprintf(stderr, "config error: %v\n", err)
+		return 1
+	}
 	cli := client.New(cfg.Endpoint, cfg.Token, cfg.Timeout)
 
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout)

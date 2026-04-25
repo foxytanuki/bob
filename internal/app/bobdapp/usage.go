@@ -7,7 +7,7 @@ func printUsage(w io.Writer) {
 
 Usage:
   bobd serve [--tunnel-name <name> --ssh <target>] [--remote-bob-port 17331] [--local-bobd 127.0.0.1:7331]
-  bobd init
+  bobd init [--force]
   bobd version
 
 Environment:

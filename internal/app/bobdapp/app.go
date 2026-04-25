@@ -17,7 +17,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	case "serve":
 		return runServe(args[1:], stderr)
 	case "init":
-		return runInit(stdout, stderr)
+		return runInit(args[1:], stdout, stderr)
 	case "version", "--version", "-v":
 		return cliutil.RunVersion(args, stdout, stderr, "bobd")
 	case "help", "--help", "-h":

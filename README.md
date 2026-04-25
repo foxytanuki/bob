@@ -103,27 +103,55 @@ VERSION=v0.3.0 COMMIT=$(git rev-parse --short HEAD) DATE=$(date -u +%Y-%m-%dT%H:
 
 ## Quick start
 
-1. Generate a shared token:
+1. Generate a shared token and local daemon config:
 
 ```bash
 bobd init
 ```
 
+This writes the local daemon config to `~/.config/bob/bobd.json` (or `$XDG_CONFIG_HOME/bob/bobd.json`) with `0600` permissions and prints a remote `bob.json` snippet.
+
 2. On the local machine:
 
 ```bash
-export BOBD_TOKEN=...
 bobd serve --tunnel-name devbox --ssh user@remote-host
 ```
 
-3. On the remote machine:
+3. On the remote machine, initialize `bob` using the token printed by `bobd init`:
 
 ```bash
-export BOB_ENDPOINT=http://127.0.0.1:17331
-export BOB_TOKEN=...
-export BOB_SESSION=devbox
+bob init --token <shared-token> --session devbox
+```
+
+This writes `~/.config/bob/bob.json` with `0600` permissions. You can also pass `--endpoint`, `--timeout`, and `--force`:
+
+```bash
+bob init --token <shared-token> --endpoint http://127.0.0.1:17331 --session devbox --timeout 5s
+```
+
+Alternatively, create `~/.config/bob/bob.json` manually using the snippet printed by `bobd init`:
+
+```json
+{
+  "endpoint": "http://127.0.0.1:17331",
+  "token": "<shared-token>",
+  "session": "devbox"
+}
+```
+
+Then verify and open URLs:
+
+```bash
 bob doctor
 bob open http://127.0.0.1:5173
+```
+
+If `~/.config/bob/bob.json` already exists, `bob init` refuses to overwrite it. To intentionally update it, delete the config file first or run `bob init --force --token <shared-token> --session <name> ...`.
+
+If `~/.config/bob/bobd.json` already exists, `bobd init` refuses to overwrite it to avoid accidentally rotating the token and breaking remote machines. To intentionally regenerate the token, delete the config file first or run:
+
+```bash
+bobd init --force
 ```
 
 If you prefer to keep the SSH session separate, you can still create the port forward explicitly.
@@ -148,20 +176,51 @@ Important:
 
 If automatic opening fails, `bob open` prints the URL so the user can open it manually.
 
-## Environment
+## Configuration
+
+`bob` and `bobd` read JSON config files from `$XDG_CONFIG_HOME/bob/`, falling back to `~/.config/bob/`.
+
+### Remote CLI config
+
+`~/.config/bob/bob.json`:
+
+```json
+{
+  "endpoint": "http://127.0.0.1:17331",
+  "token": "<shared-token>",
+  "session": "devbox",
+  "timeout": "5s"
+}
+```
+
+### Local daemon config
+
+`~/.config/bob/bobd.json`:
+
+```json
+{
+  "bind": "127.0.0.1:7331",
+  "token": "<shared-token>",
+  "localhost_only": true
+}
+```
+
+Environment variables override config file values, which is useful for temporary overrides, CI, and containers.
+
+## Environment overrides
 
 ### Remote CLI
 
-- `BOB_ENDPOINT` default: `http://127.0.0.1:17331`
-- `BOB_TOKEN`
-- `BOB_SESSION` required for auto-mirror, set to the tunnel name
-- `BOB_TIMEOUT` default: `5s`
+- `BOB_ENDPOINT` overrides `endpoint` (default: `http://127.0.0.1:17331`)
+- `BOB_TOKEN` overrides `token`
+- `BOB_SESSION` overrides `session`; required for auto-mirror, set to the tunnel name
+- `BOB_TIMEOUT` overrides `timeout` (default: `5s`)
 
 ### Local daemon
 
-- `BOBD_BIND` default: `127.0.0.1:7331`
-- `BOBD_TOKEN` required
-- `BOBD_LOCALHOST_ONLY` default: `true`
+- `BOBD_BIND` overrides `bind` (default: `127.0.0.1:7331`)
+- `BOBD_TOKEN` overrides `token` (required via env or config)
+- `BOBD_LOCALHOST_ONLY` overrides `localhost_only` (default: `true`)
 
 `bobd serve` flags:
 

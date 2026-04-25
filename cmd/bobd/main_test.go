@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -145,5 +148,144 @@ func TestRunVersionCommandRejectsExtraArgs(t *testing.T) {
 	}
 	if got := stderr.String(); !strings.Contains(got, "usage: bobd version") {
 		t.Fatalf("stderr = %q, want version usage", got)
+	}
+}
+
+func TestRunInitWritesConfigAndGuidance(t *testing.T) {
+	configRoot := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configRoot)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := bobdapp.Run([]string{"init"}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0\nstderr = %q", exitCode, stderr.String())
+	}
+
+	path := filepath.Join(configRoot, "bob", "bobd.json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var cfg struct {
+		Bind          string `json:"bind"`
+		Token         string `json:"token"`
+		LocalhostOnly *bool  `json:"localhost_only"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+
+	if cfg.Bind != "127.0.0.1:7331" {
+		t.Fatalf("config bind = %q, want 127.0.0.1:7331", cfg.Bind)
+	}
+	if cfg.Token == "" || len(cfg.Token) != 64 {
+		t.Fatalf("config token = %q, want non-empty token", cfg.Token)
+	}
+	if cfg.LocalhostOnly == nil || !*cfg.LocalhostOnly {
+		t.Fatal("localhost_only = nil/false, want true")
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("config mode = %v, want %v", info.Mode().Perm(), os.FileMode(0o600))
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, path) {
+		t.Fatalf("stdout = %q, want path %q", out, path)
+	}
+	if !strings.Contains(out, "On the remote machine, create ~/.config/bob/bob.json:") {
+		t.Fatalf("stdout = %q, want remote bob.json guidance", out)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("stderr = %q, want empty", stderr.String())
+	}
+}
+
+func TestRunInitRefusesExistingConfigByDefault(t *testing.T) {
+	configRoot := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configRoot)
+
+	path := filepath.Join(configRoot, "bob", "bobd.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"bind":"127.0.0.1:7331","token":"existing-token","localhost_only":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := bobdapp.Run([]string{"init"}, &stdout, &stderr)
+	if exitCode != 1 {
+		t.Fatalf("exitCode = %d, want 1", exitCode)
+	}
+	if out := stderr.String(); !strings.Contains(out, "already exists") {
+		t.Fatalf("stderr = %q, want already exists", out)
+	}
+	if out := stderr.String(); !strings.Contains(out, "Use existing config, delete it first, or run 'bobd init --force' to regenerate it.") {
+		t.Fatalf("stderr = %q, want existing config guidance", out)
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("unexpected error statting existing config: %v", err)
+	}
+	if got, err := os.ReadFile(path); err != nil {
+		t.Fatal(err)
+	} else if !strings.Contains(string(got), "existing-token") {
+		t.Fatalf("config token changed unexpectedly: %q", string(got))
+	}
+}
+
+func TestRunInitForceOverwritesConfig(t *testing.T) {
+	configRoot := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configRoot)
+
+	path := filepath.Join(configRoot, "bob", "bobd.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"bind":"127.0.0.1:7331","token":"existing-token","localhost_only":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := bobdapp.Run([]string{"init", "--force"}, &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("exitCode = %d, want 0\nstderr = %q", exitCode, stderr.String())
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"token"`) {
+		t.Fatalf("unexpected config file contents: %q", string(data))
+	}
+
+	var cfg struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("unmarshal config: %v", err)
+	}
+	if cfg.Token == "existing-token" {
+		t.Fatalf("token was not regenerated: %q", cfg.Token)
+	}
+	if cfg.Token == "" {
+		t.Fatal("token is empty")
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, path) {
+		t.Fatalf("stdout = %q, want path %q", out, path)
+	}
+	if !strings.Contains(out, "On the remote machine, create ~/.config/bob/bob.json:") {
+		t.Fatalf("stdout = %q, want remote bob.json guidance", out)
 	}
 }

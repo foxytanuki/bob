@@ -18,6 +18,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	}
 
 	switch args[0] {
+	case "init":
+		return runInit(args[1:], stdout, stderr)
 	case "open":
 		return runOpen(args[1:], stderr)
 	case "doctor":

@@ -7,6 +7,7 @@ func printUsage(w io.Writer) {
 
 Usage:
   bob <url>
+  bob init --token <token> --session <name> [--endpoint <url>] [--timeout 5s] [--force]
   bob open <url>
   bob doctor
   bob version

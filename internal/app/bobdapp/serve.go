@@ -75,7 +75,7 @@ func runServe(args []string, stderr io.Writer) int {
 		return 1
 	}
 
-	cfg, err := config.LoadDaemonFromEnv()
+	cfg, err := config.LoadDaemon()
 	if err != nil {
 		fmt.Fprintf(stderr, "config error: %v\n", err)
 		return 1
@@ -185,17 +185,46 @@ func runServe(args []string, stderr io.Writer) int {
 	return 0
 }
 
-func runInit(stdout, stderr io.Writer) int {
+func runInit(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("bobd init", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	force := fs.Bool("force", false, "overwrite existing bobd config")
+	fs.Usage = func() {
+		_, _ = io.WriteString(stderr, "Usage: bobd init [--force]\n")
+	}
+	if err := fs.Parse(args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 0 {
+		fs.Usage()
+		fmt.Fprintln(stderr, "bobd init does not accept positional arguments")
+		return 1
+	}
+
 	token, err := generateToken()
 	if err != nil {
 		fmt.Fprintf(stderr, "failed to generate token: %v\n", err)
 		return 1
 	}
+	path, err := config.WriteDaemonConfig(config.Daemon{Bind: "127.0.0.1:7331", Token: token, LocalhostOnly: true}, *force)
+	if err != nil {
+		fmt.Fprintf(stderr, "failed to write config: %v\n", err)
+		if !*force {
+			fmt.Fprintln(stderr, "Use existing config, delete it first, or run 'bobd init --force' to regenerate it.")
+		}
+		return 1
+	}
 
 	_, _ = fmt.Fprintf(stdout, "Generated token:\n%s\n\n", token)
-	_, _ = fmt.Fprintf(stdout, "Set on the local machine before running bobd:\n")
+	_, _ = fmt.Fprintf(stdout, "Wrote local daemon config:\n%s\n\n", path)
+	_, _ = fmt.Fprintf(stdout, "Optional local env override before running bobd:\n")
 	_, _ = fmt.Fprintf(stdout, "  export BOBD_TOKEN=%s\n\n", token)
-	_, _ = fmt.Fprintf(stdout, "Set on the remote machine for bob:\n")
+	_, _ = fmt.Fprintf(stdout, "On the remote machine, create ~/.config/bob/bob.json:\n")
+	_, _ = fmt.Fprintf(stdout, "{\n")
+	_, _ = fmt.Fprintf(stdout, "  \"endpoint\": \"http://127.0.0.1:17331\",\n")
+	_, _ = fmt.Fprintf(stdout, "  \"token\": \"%s\"\n", token)
+	_, _ = fmt.Fprintf(stdout, "}\n\n")
+	_, _ = fmt.Fprintf(stdout, "Optional remote env overrides for bob:\n")
 	_, _ = fmt.Fprintf(stdout, "  export BOB_TOKEN=%s\n", token)
 	_, _ = fmt.Fprintf(stdout, "  export BOB_ENDPOINT=http://127.0.0.1:17331\n")
 	return 0
